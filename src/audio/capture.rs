@@ -22,6 +22,9 @@ const RETRY_SLOW: Duration = Duration::from_secs(2);
 /// How often to check whether the default output device changed.
 const DEVICE_CHECK: Duration = Duration::from_secs(1);
 
+/// Latest default output device reading and when it was taken (None until the first).
+type DefaultDevice = Arc<Mutex<Option<(Instant, Option<cpal::DeviceId>)>>>;
+
 pub struct Format {
     pub sample_rate: u32,
     pub channels: u16,
@@ -43,10 +46,13 @@ pub struct Capture {
     invalidated: Arc<AtomicBool>,
     host: cpal::Host,
     stream: Option<cpal::Stream>,
-    /// The device the stream is open on.
+    /// The device the stream is open on, and when it was opened.
     device_id: Option<cpal::DeviceId>,
+    opened_at: Instant,
+    /// Latest default output device and when it was read, from the watcher thread.
+    /// Reading it takes a few ms, so it's kept off the render thread.
+    default_device: DefaultDevice,
     retry_at: Instant,
-    next_device_check: Instant,
     pub format: Option<Format>,
     pub last_error: Option<String>,
 }
@@ -66,11 +72,13 @@ impl Capture {
             host: cpal::default_host(),
             stream: None,
             device_id: None,
+            opened_at: Instant::now(),
+            default_device: Arc::new(Mutex::new(None)),
             retry_at: Instant::now(),
-            next_device_check: Instant::now() + DEVICE_CHECK,
             format: None,
             last_error: None,
         };
+        watch_default_device(Arc::clone(&c.default_device));
         c.maintain();
         c
     }
@@ -80,6 +88,13 @@ impl Capture {
         (self.ring_frames * 2 * size_of::<f32>()) as u64
     }
 
+    /// Time one default-device check (for `--probe-audio`).
+    pub fn time_device_check(&self) -> Duration {
+        let t = Instant::now();
+        let _ = self.host.default_output_device().and_then(|d| d.id().ok());
+        t.elapsed()
+    }
+
     /// Call once per frame: re-opens the stream after device changes or errors.
     pub fn maintain(&mut self) {
         let now = Instant::now();
@@ -87,13 +102,15 @@ impl Capture {
             self.close();
             self.retry_at = now + RETRY_FAST;
         }
-        if self.stream.is_some() && now >= self.next_device_check {
-            self.next_device_check = now + DEVICE_CHECK;
-            let default = self.host.default_output_device().and_then(|d| d.id().ok());
-            if default != self.device_id {
-                self.close();
-                self.retry_at = now; // re-open on the new default right away
-            }
+        // Only trust readings taken after the stream was opened, so a stale one
+        // can't bounce us off the device we just opened.
+        let moved = self.default_device.lock().is_ok_and(|d| {
+            d.as_ref()
+                .is_some_and(|(at, id)| *at > self.opened_at && *id != self.device_id)
+        });
+        if self.stream.is_some() && moved {
+            self.close();
+            self.retry_at = now; // re-open on the new default right away
         }
         if self.stream.is_none() && now >= self.retry_at {
             match self.open() {
@@ -157,7 +174,7 @@ impl Capture {
         });
         self.stream = Some(stream);
         self.device_id = Some(id);
-        self.next_device_check = Instant::now() + DEVICE_CHECK;
+        self.opened_at = Instant::now();
         Ok(())
     }
 
@@ -182,4 +199,23 @@ impl Capture {
         right.extend(r.right.iter().skip(skip));
         true
     }
+}
+
+/// Reads the default output device every `DEVICE_CHECK` on its own thread.
+/// Stops when the capture that owns `shared` is dropped.
+fn watch_default_device(shared: DefaultDevice) {
+    let spawned = std::thread::Builder::new()
+        .name("audio-device-watch".into())
+        .spawn(move || {
+            let host = cpal::default_host();
+            while Arc::strong_count(&shared) > 1 {
+                std::thread::sleep(DEVICE_CHECK);
+                let id = host.default_output_device().and_then(|d| d.id().ok());
+                if let Ok(mut d) = shared.lock() {
+                    *d = Some((Instant::now(), id));
+                }
+            }
+        });
+    // Without the watcher, device switches still recover via cpal's errors.
+    let _ = spawned;
 }

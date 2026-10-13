@@ -58,6 +58,12 @@ impl Ln {
         self
     }
 
+    /// Plain text without styles.
+    #[cfg(test)]
+    pub fn text(&self) -> String {
+        self.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
     pub fn width(&self) -> usize {
         self.width
     }
@@ -68,12 +74,17 @@ impl Ln {
         if dy >= area.height || dx >= area.width {
             return;
         }
+        // Every glyph tide draws is one cell wide, so characters go straight into
+        // cells; ratatui's string path does grapheme segmentation per span.
         let (mut x, y, right) = (area.x + dx, area.y + dy, area.right());
         for s in &self.spans {
-            if x >= right {
-                break;
+            for ch in s.content.chars() {
+                if x >= right {
+                    return;
+                }
+                buf[(x, y)].set_char(ch).set_style(s.style);
+                x += 1;
             }
-            x = buf.set_stringn(x, y, &s.content, (right - x) as usize, s.style).0;
         }
     }
 }
@@ -126,6 +137,7 @@ pub fn spark_rows(vals: &[f32], w: usize, rows: usize, c: Color) -> Vec<Ln> {
 }
 
 /// Braille canvas: each cell holds 2×4 dots.
+#[derive(Clone)]
 pub struct Braille {
     pub cols: usize,
     pub rows: usize,

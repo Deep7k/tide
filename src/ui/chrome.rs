@@ -1,8 +1,8 @@
-//! Panel boxes, header and footer.
+//! Panel boxes, top panel and footer.
 
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 
-use super::{fmt, glyphs::Ln};
+use super::glyphs::Ln;
 use crate::app::App;
 use crate::theme::th;
 
@@ -24,7 +24,8 @@ pub fn panel(buf: &mut Buffer, r: Rect, hotkey: &str, name: &str, color: Color, 
         .a(name, color)
         .a(suffix, th().dim)
         .a(" ", th().dim);
-    if title.width() <= inner_w {
+    // An empty name means a plain box with no title.
+    if !name.is_empty() && title.width() <= inner_w {
         top = top_with_title(top, title, inner_w);
     } else {
         top.a(&"─".repeat(inner_w), th().border);
@@ -56,40 +57,58 @@ fn top_with_title(mut top: Ln, title: Ln, w: usize) -> Ln {
     top
 }
 
-/// `▶ Title  ·  Artist  ·  Album` on the left, audio info on the right.
-pub fn header(buf: &mut Buffer, r: Rect, app: &App) {
-    let mut left = Ln::new();
-    left.a("▶ ", th().accent);
-    match &app.media {
-        Some(m) => {
-            left.bold(&m.title, th().hi);
-            for part in [&m.artist, &m.album].into_iter().filter(|s| !s.is_empty()) {
-                left.a("  ·  ", th().dim).a(part, th().dim);
-            }
-        }
-        None => {
-            left.a("—", th().dim);
-        }
-    }
-    let a = &app.audio;
-    let info = format!(
-        "{} · {} · fft {} · {:.0} fps",
-        a.source,
-        fmt::khz(a.sample_rate),
-        a.fft,
-        app.fps
-    );
-    let mut right = Ln::new();
-    right.a(&info, th().dim);
+/// Full-width top panel: `◆ user@host` on the left, battery and fps on the
+/// right. A 3-row box when there's room, otherwise a single plain line.
+pub fn top_panel(buf: &mut Buffer, r: Rect, app: &App) {
+    let inner = if r.height >= 3 {
+        panel(buf, r, "", "", th().text, "")
+    } else {
+        Rect::new(r.x + 1, r.y, r.width.saturating_sub(2), r.height)
+    };
 
-    // 1 col of padding each side; the right text yields to the title.
-    let pad = Rect::new(r.x + 1, r.y, r.width.saturating_sub(2), r.height);
-    let right_x = pad.width as usize - right.width().min(pad.width as usize);
-    if left.width() + 3 <= right_x {
-        right.put(buf, pad, right_x as u16, 0);
+    let mut left = Ln::new();
+    left.a("◆ ", th().accent)
+        .bold(&app.user, th().hi)
+        .a(&format!("@{}", app.host), th().dim);
+
+    // Right side, from most to least detailed; use the first that fits.
+    let fps = |ln: &mut Ln| {
+        ln.bold(&format!("{:.0}", app.fps), th().hi).a(" fps", th().dim);
+    };
+    let mut options = Vec::new();
+    if let Some(b) = &app.battery {
+        let color = if b.percent < LOW_BATTERY {
+            th().cpu_hot
+        } else {
+            th().battery
+        };
+        let lit = (b.percent as usize * 10 + 5) / 100;
+        let pct = format!(" {}%", b.percent);
+        let mut full = Ln::new();
+        full.a("bat ", th().dim)
+            .a(&"▮".repeat(lit), color)
+            .a(&"▯".repeat(10 - lit), th().track)
+            .bold(&pct, th().hi)
+            .a("   ", th().dim);
+        fps(&mut full);
+        let mut short = Ln::new();
+        short.a("bat", th().dim).bold(&pct, th().hi).a("   ", th().dim);
+        fps(&mut short);
+        options.extend([full, short]);
     }
-    left.put(buf, pad, 0, 0);
+    let mut only_fps = Ln::new();
+    fps(&mut only_fps);
+    options.push(only_fps);
+
+    let width = inner.width as usize;
+    if let Some(right) = options.into_iter().find(|ln| left.width() + 3 + ln.width() <= width) {
+        right.put(buf, inner, (width - right.width()) as u16, 0);
+    }
+    left.put(buf, inner, 0, 0);
 }
+
+/// Battery meter turns hot below this percentage.
+const LOW_BATTERY: u8 = 20;
 
 /// Key hints, right-aligned, and a transient notice on the left.
 pub fn footer(buf: &mut Buffer, r: Rect, notice: Option<&str>) {

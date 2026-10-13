@@ -157,6 +157,12 @@ impl Audio {
             vu.len(),
             audio.agc.ceiling_db
         );
+        let checks: Vec<_> = (0..20).map(|_| audio.capture.time_device_check()).collect();
+        let _ = writeln!(
+            out,
+            "default-device check: {:?} (first) · {:?} (later)",
+            checks[0], checks[19]
+        );
         let _ = writeln!(
             out,
             "VU rms dB  p10 {:.1}  p50 {:.1}  p90 {:.1}",

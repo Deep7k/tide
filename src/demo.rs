@@ -1,7 +1,7 @@
 //! `--demo`: fake animated data, ported from the mock's `build()` so tide can
 //! be compared side by side with the HTML reference.
 
-use crate::app::{App, CPU_HIST, Cmd, Gpu, Media, NET_HIST, Proc, push_hist};
+use crate::app::{App, Battery, CPU_HIST, Cmd, Gpu, Media, NET_HIST, Proc, push_hist};
 
 const MIB: f64 = 1024.0 * 1024.0;
 const GIB: f64 = 1024.0 * MIB;
@@ -66,14 +66,29 @@ impl Demo {
         app.mem.swap_used = (0.8 * GIB) as u64;
         app.mem.self_bytes = (84.0 * MIB) as u64;
 
-        app.gpus = vec![Gpu {
-            name: "rtx".into(),
-            mem_used: (3.1 * GIB) as u64,
-            mem_total: (8.0 * GIB) as u64,
-            temp_c: Some(54.0),
-            watts: Some(31.0),
-            ..Default::default()
-        }];
+        // Integrated + discrete, as in the mockup.
+        app.gpus = vec![
+            Gpu {
+                shared: true,
+                mem_used: (1.2 * GIB) as u64,
+                mem_total: (16.0 * GIB) as u64,
+                temp_c: Some(48.0),
+                ..Default::default()
+            },
+            Gpu {
+                mem_used: (3.1 * GIB) as u64,
+                mem_total: (8.0 * GIB) as u64,
+                temp_c: Some(54.0),
+                watts: Some(31.0),
+                ..Default::default()
+            },
+        ];
+        app.user = "USERNAME".into();
+        app.host = "tide".into();
+        app.battery = Some(Battery {
+            percent: 60,
+            charging: false,
+        });
 
         app.cpu.ghz = 4.31;
         app.cpu.self_use = 0.031;
@@ -112,6 +127,7 @@ impl Demo {
         // mem, gpu
         app.mem.ram_used = ((0.35 + 0.01 * (t * 0.2).sin()) * 32.0 * GIB) as u64;
         app.gpus[0].util = cl(0.24 + 0.05 * (t * 0.9).sin() + 0.04 * beat) as f32;
+        app.gpus[1].util = cl(0.1 + 0.03 * (t * 1.3).sin() + 0.02 * beat) as f32;
 
         // net
         let down = cl(0.35 + 0.25 * (t * 0.5).sin() + 0.1 * (t * 2.1).sin());

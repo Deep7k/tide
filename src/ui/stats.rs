@@ -79,18 +79,13 @@ pub fn gpu(buf: &mut Buffer, inner: Rect, app: &App) {
         ln.put(buf, inner, 0, 0);
         return;
     }
-    // Two rows per GPU, as many as fit; labels share a width so the bars line up.
+    // Two rows per GPU (gpu1, gpu2, … in Windows' order), as many as fit.
     let shown = (inner.height as usize / 2).clamp(1, app.gpus.len());
-    let label_w = app.gpus[..shown]
-        .iter()
-        .map(|g| g.name.chars().count() + 1)
-        .max()
-        .unwrap_or(0)
-        .max(5);
+    let label_w = format!("gpu{shown} ").len();
     for (i, g) in app.gpus[..shown].iter().enumerate() {
         let y = i as u16 * 2;
         let mut ln = Ln::new();
-        ln.a(&format!("{:<label_w$}", g.name), th().dim);
+        ln.a(&format!("{:<label_w$}", format!("gpu{}", i + 1)), th().dim);
         bar(&mut ln, g.util, w.saturating_sub(label_w + 5), th().gpu).a(&fmt::pct4(g.util), th().text);
         ln.put(buf, inner, 0, y);
 
@@ -217,7 +212,6 @@ mod tests {
         let mut app = App::new(Config::default());
         app.gpus = vec![
             Gpu {
-                name: "uhd".into(),
                 util: 0.22,
                 shared: true,
                 mem_used: GIB,
@@ -225,7 +219,6 @@ mod tests {
                 ..Default::default()
             },
             Gpu {
-                name: "t1200".into(),
                 mem_total: 4 * GIB,
                 temp_c: Some(44.0),
                 ..Default::default()
@@ -236,12 +229,12 @@ mod tests {
         super::gpu(&mut buf, area, &app);
         let r = rows(&buf);
         assert!(
-            r[0].starts_with("uhd   █████░") && r[0].ends_with("  22%"),
+            r[0].starts_with("gpu1 █████▎░") && r[0].ends_with("  22%"),
             "{:?}",
             r[0]
         );
         assert_eq!(r[1].trim_end(), "shared 1.0/16G");
-        assert!(r[2].starts_with("t1200 ░") && r[2].ends_with("   0%"), "{:?}", r[2]);
+        assert!(r[2].starts_with("gpu2 ░") && r[2].ends_with("   0%"), "{:?}", r[2]);
         assert_eq!(r[3].trim_end(), "vram 0.0/4G · 44°C");
     }
 }

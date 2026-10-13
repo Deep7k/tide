@@ -34,6 +34,8 @@ pub struct Theme {
     pub gpu: Color,
     pub net_down: Color,
     pub net_up: Color,
+    /// Battery meter in the top panel (turns `cpu_hot` when low).
+    pub battery: Color,
 }
 
 const fn rgb(hex: u32) -> Color {
@@ -60,6 +62,7 @@ impl Default for Theme {
             gpu: rgb(0xFF7A59),
             net_down: rgb(0x22E0FF),
             net_up: rgb(0xFF5EA8),
+            battery: rgb(0x7CF2C4),
         }
     }
 }
@@ -116,6 +119,7 @@ struct ThemeFile {
     gpu: Option<Hex>,
     net_down: Option<Hex>,
     net_up: Option<Hex>,
+    battery: Option<Hex>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -152,7 +156,7 @@ impl ThemeFile {
             record_rim,
             record_groove
         );
-        set!(cpu, cpu_hot, mem, gpu, net_down, net_up);
+        set!(cpu, cpu_hot, mem, gpu, net_down, net_up, battery);
         if let Some(viz) = self.viz {
             if viz.len() < 2 {
                 return Err("viz needs at least 2 colours".into());

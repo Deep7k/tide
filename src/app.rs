@@ -45,7 +45,6 @@ pub struct Mem {
 
 #[derive(Default)]
 pub struct Gpu {
-    pub name: String,
     pub util: f32,
     /// Integrated GPUs report shared memory; discrete ones dedicated VRAM.
     pub shared: bool,
@@ -78,6 +77,12 @@ pub struct Proc {
     /// Percent of the whole machine, like Task Manager.
     pub cpu: f32,
     pub mem: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Battery {
+    pub percent: u8,
+    pub charging: bool,
 }
 
 pub struct Media {
@@ -130,6 +135,11 @@ pub struct App {
     notice: Option<(String, Instant)>,
     pub audio: AudioInfo,
     pub fps: f32,
+    /// For the top panel: `user@host`.
+    pub user: String,
+    pub host: String,
+    /// None on machines without a battery.
+    pub battery: Option<Battery>,
 }
 
 impl App {
@@ -159,6 +169,11 @@ impl App {
                 fft: 4096,
             },
             fps: 0.0,
+            user: std::env::var("USERNAME").unwrap_or_else(|_| "user".into()),
+            host: std::env::var("COMPUTERNAME")
+                .map(|h| h.to_lowercase())
+                .unwrap_or_else(|_| "localhost".into()),
+            battery: None,
         }
     }
 
@@ -171,6 +186,15 @@ impl App {
             *p = v.max(*p - self.cfg.spectrum.peak_decay * dt);
         }
         self.bands = levels;
+    }
+
+    /// Nothing is animating: no sound (bars, peaks and meters settled at zero)
+    /// and the record has stopped. The render loop can slow down.
+    pub fn is_idle(&self) -> bool {
+        const STILL: f32 = 1e-3;
+        self.record_speed == 0.0
+            && self.bands.iter().chain(&self.peaks).all(|&v| v < STILL)
+            && self.vu.iter().all(|v| v.level < STILL)
     }
 
     /// Shows a short message in the footer.

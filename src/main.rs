@@ -1,19 +1,23 @@
 mod app;
 mod audio;
+mod bench;
 mod config;
 mod demo;
 mod media;
+mod profile;
 mod sys;
 mod theme;
 mod ui;
 
-use std::io::{self, BufWriter, Stdout};
+use std::cell::Cell;
+use std::io::{self, BufWriter, Stdout, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use ratatui::{
-    Terminal,
+    Terminal, TerminalOptions, Viewport,
     backend::{CrosstermBackend, TestBackend},
     crossterm::{
         cursor,
@@ -29,6 +33,7 @@ use audio::Audio;
 use config::Config;
 use demo::Demo;
 use media::MediaLink;
+use profile::{Phase, Profile};
 use sys::Stats;
 
 const USAGE: &str = "usage: tide [--config PATH] [--demo] [--fps N]
@@ -38,9 +43,28 @@ const USAGE: &str = "usage: tide [--config PATH] [--demo] [--fps N]
        --dump WxH       print one demo frame as plain text
        --probe-audio    capture 5 s of system audio and print level stats
        --probe-stats    sample system stats for 2 s and print them
-       --probe-media    print the current media session and master volume";
+       --probe-media    print the current media session and master volume
+       --bench WxH      time off-screen rendering of demo frames";
 
-type Term = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
+type Term = Terminal<CrosstermBackend<FrameWriter>>;
+
+/// Collects a whole frame and sends it to the console in one write. Console
+/// writes are synchronous (the console parses them before returning), so
+/// ratatui's own flush is held back until the gate opens after the
+/// end-of-update marker.
+struct FrameWriter {
+    out: BufWriter<Stdout>,
+    gate: Rc<Cell<bool>>,
+}
+
+impl Write for FrameWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.out.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        if self.gate.get() { self.out.flush() } else { Ok(()) }
+    }
+}
 
 struct Args {
     demo: bool,
@@ -49,9 +73,13 @@ struct Args {
     config: Option<PathBuf>,
     print_config: bool,
     dump: Option<(u16, u16)>,
+    /// Hidden dev options: write a loop profile on exit; quit after N seconds.
+    profile: Option<PathBuf>,
+    quit_after: Option<f64>,
     probe_audio: bool,
     probe_stats: bool,
     probe_media: bool,
+    bench: Option<(u16, u16)>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -61,14 +89,22 @@ fn parse_args() -> Result<Args, String> {
         config: None,
         print_config: false,
         dump: None,
+        profile: None,
+        quit_after: None,
         probe_audio: false,
         probe_stats: false,
         probe_media: false,
+        bench: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--demo" => args.demo = true,
+            "--profile" => args.profile = Some(it.next().ok_or("--profile needs a file")?.into()),
+            "--quit-after" => {
+                let v = it.next().ok_or("--quit-after needs seconds")?;
+                args.quit_after = Some(v.parse().map_err(|_| format!("bad --quit-after: {v}"))?);
+            }
             "--probe-audio" => args.probe_audio = true,
             "--probe-stats" => args.probe_stats = true,
             "--probe-media" => args.probe_media = true,
@@ -79,19 +115,25 @@ fn parse_args() -> Result<Args, String> {
                 let fps = v.parse::<u32>().ok().filter(|f| (1..=240).contains(f));
                 args.fps = Some(fps.ok_or(format!("bad --fps: {v} (1–240)"))?);
             }
-            "--dump" => {
-                let v = it.next().ok_or("--dump needs WxH")?;
-                let (w, h) = v.split_once('x').ok_or(format!("bad --dump: {v}"))?;
-                args.dump = Some((
-                    w.parse().map_err(|_| "bad width")?,
-                    h.parse().map_err(|_| "bad height")?,
-                ));
-            }
+            "--bench" => args.bench = Some(parse_size(it.next().ok_or("--bench needs WxH")?)?),
+            "--dump" => args.dump = Some(parse_size(it.next().ok_or("--dump needs WxH")?)?),
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument: {other}\n{USAGE}")),
         }
     }
     Ok(args)
+}
+
+/// "165x42" → (165, 42).
+fn parse_size(v: String) -> Result<(u16, u16), String> {
+    let (w, h) = v.split_once('x').ok_or(format!("bad size {v:?}, expected WxH"))?;
+    let num = |s: &str| {
+        s.parse::<u16>()
+            .ok()
+            .filter(|&n| n > 0)
+            .ok_or(format!("bad size {v:?}"))
+    };
+    Ok((num(w)?, num(h)?))
 }
 
 fn main() -> ExitCode {
@@ -121,6 +163,10 @@ fn main() -> ExitCode {
         print!("{}", Audio::probe(&cfg.audio, 5.0));
         return ExitCode::SUCCESS;
     }
+    if let Some((w, h)) = args.bench {
+        print!("{}", bench::run(&cfg, w, h));
+        return ExitCode::SUCCESS;
+    }
     if args.probe_media {
         print!("{}", media::probe());
         return ExitCode::SUCCESS;
@@ -129,7 +175,12 @@ fn main() -> ExitCode {
         print!("{}", sys::probe(&cfg.stats));
         return ExitCode::SUCCESS;
     }
-    match run(cfg, args.demo) {
+    let opts = RunOpts {
+        demo_only: args.demo,
+        profile: args.profile,
+        quit_after: args.quit_after.map(Duration::from_secs_f64),
+    };
+    match run(cfg, opts) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("tide: {e}");
@@ -155,29 +206,49 @@ fn load_settings(args: &Args) -> Result<Config, String> {
     Ok(cfg)
 }
 
-fn run(cfg: Config, demo_only: bool) -> io::Result<()> {
+struct RunOpts {
+    demo_only: bool,
+    profile: Option<PathBuf>,
+    quit_after: Option<Duration>,
+}
+
+fn run(cfg: Config, opts: RunOpts) -> io::Result<()> {
     // Windows' default ~15.6 ms timer tick can't pace 60 fps.
     // SAFETY: plain Win32 call, paired with timeEndPeriod below.
     unsafe { windows::Win32::Media::timeBeginPeriod(1) };
-    let mut term = setup()?;
+    let (mut term, gate) = setup()?;
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore();
         prev_hook(info);
     }));
 
-    let result = event_loop(&mut term, cfg, demo_only);
+    let mut prof = opts.profile.is_some().then(Profile::new);
+    let result = event_loop(&mut term, &gate, cfg, &opts, &mut prof);
 
     restore();
     unsafe { windows::Win32::Media::timeEndPeriod(1) };
+    if let (Some(p), Some(path)) = (prof, &opts.profile) {
+        std::fs::write(path, p.report())?;
+    }
     result
 }
 
-fn setup() -> io::Result<Term> {
+fn setup() -> io::Result<(Term, Rc<Cell<bool>>)> {
     terminal::enable_raw_mode()?;
     let mut out = BufWriter::with_capacity(1 << 16, io::stdout());
     execute!(out, EnterAlternateScreen, cursor::Hide)?;
-    Terminal::new(CrosstermBackend::new(out))
+    // A fixed viewport stops ratatui asking the console for its size every
+    // frame (a round trip to the console host); resizes arrive as events.
+    let (w, h) = terminal::size()?;
+    let gate = Rc::new(Cell::new(false));
+    let writer = FrameWriter {
+        out,
+        gate: Rc::clone(&gate),
+    };
+    let viewport = Viewport::Fixed(Rect::new(0, 0, w, h));
+    let term = Terminal::with_options(CrosstermBackend::new(writer), TerminalOptions { viewport })?;
+    Ok((term, gate))
 }
 
 fn restore() {
@@ -185,8 +256,22 @@ fn restore() {
     let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show);
 }
 
-fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
+fn event_loop(
+    term: &mut Term,
+    gate: &Cell<bool>,
+    cfg: Config,
+    opts: &RunOpts,
+    prof: &mut Option<Profile>,
+) -> io::Result<()> {
+    let demo_only = opts.demo_only;
+    let started = Instant::now();
+    let lap = |prof: &mut Option<Profile>, phase: Phase| {
+        if let Some(p) = prof.as_mut() {
+            p.lap(phase);
+        }
+    };
     let fps = cfg.fps;
+    let idle_fps = cfg.idle_fps;
     let max_bands = cfg.spectrum.max_bands;
     let max_rows = (cfg.spectrum.max_rows > 0).then_some(cfg.spectrum.max_rows);
     // Live mode reads audio and system stats; --demo fakes everything.
@@ -197,6 +282,8 @@ fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
     let mut app = App::new(cfg);
     let mut demo = demo_only.then(|| Demo::new(&mut app));
     let frame = Duration::from_secs_f64(1.0 / fps as f64);
+    let idle_frame = Duration::from_secs_f64(1.0 / idle_fps.min(fps) as f64);
+    let mut area = term.get_frame().area();
     let mut last = Instant::now();
     let mut next = last + frame;
 
@@ -213,8 +300,8 @@ fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
             };
         }
 
-        let size = term.size()?;
-        let layout = ui::layout::compute(Rect::new(0, 0, size.width, size.height), max_bands, max_rows);
+        let layout = ui::layout::compute(area, max_bands, max_rows);
+        lap(prof, Phase::Layout);
         app.band_count = layout.bands as usize;
         if let Some(d) = demo.as_mut() {
             d.update(&mut app, dt as f64);
@@ -229,19 +316,36 @@ fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
             m.update(&mut app);
         }
         app.tick(dt);
+        lap(prof, Phase::Data);
 
         queue!(term.backend_mut(), BeginSynchronizedUpdate)?;
         term.draw(|f| ui::draw(f, &app, &layout))?;
-        execute!(term.backend_mut(), EndSynchronizedUpdate)?;
+        queue!(term.backend_mut(), EndSynchronizedUpdate)?;
+        gate.set(true);
+        let flushed = term.backend_mut().flush();
+        gate.set(false);
+        flushed?;
+        lap(prof, Phase::Draw);
 
-        // Handle input until the next frame is due.
+        // While nothing moves, redraw at the idle rate instead.
+        if app.is_idle() {
+            next = next.max(now + idle_frame);
+        }
+
+        // Handle input until the next frame is due; anything that changes the
+        // screen ends the wait early so it shows at once.
         loop {
             let timeout = next.saturating_duration_since(Instant::now());
             if !event::poll(timeout)? {
                 break;
             }
-            if let Event::Key(key) = event::read()? {
-                match key_action(key, seek) {
+            match event::read()? {
+                Event::Resize(w, h) => {
+                    area = Rect::new(0, 0, w, h);
+                    term.resize(area)?;
+                    next = Instant::now();
+                }
+                Event::Key(key) => match key_action(key, seek) {
                     Some(Action::Quit) => return Ok(()),
                     Some(Action::Cmd(cmd)) => {
                         if let Some(m) = &media {
@@ -249,10 +353,16 @@ fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
                         } else if let Some(d) = demo.as_mut() {
                             d.apply(&mut app, cmd);
                         }
+                        next = Instant::now();
                     }
                     None => {}
-                }
+                },
+                _ => {}
             }
+        }
+        lap(prof, Phase::Wait);
+        if opts.quit_after.is_some_and(|d| started.elapsed() >= d) {
+            return Ok(());
         }
         next += frame;
         let now = Instant::now();
@@ -334,7 +444,7 @@ mod tests {
 
     #[test]
     fn snapshot_full_size() {
-        check(165, 41);
+        check(165, 42);
     }
 
     #[test]

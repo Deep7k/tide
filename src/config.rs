@@ -11,6 +11,8 @@ use serde::Deserialize;
 #[serde(default)]
 pub struct Config {
     pub fps: u32,
+    /// Render rate while nothing is moving (silence, record stopped).
+    pub idle_fps: u32,
     /// Built-in theme name, a theme name in `%APPDATA%\tide\themes\`, or a path to a theme file.
     pub theme: String,
     pub audio: AudioCfg,
@@ -162,6 +164,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             fps: 60,
+            idle_fps: 10,
             theme: "tide".into(),
             audio: AudioCfg::default(),
             spectrum: SpectrumCfg::default(),
@@ -290,6 +293,10 @@ impl Config {
         check(
             (1..=240).contains(&self.fps),
             format!("fps must be 1–240 (got {})", self.fps),
+        );
+        check(
+            (1..=240).contains(&self.idle_fps),
+            format!("idle_fps must be 1–240 (got {})", self.idle_fps),
         );
         check(
             a.fft_size.is_power_of_two() && (1024..=16_384).contains(&a.fft_size),
@@ -467,6 +474,9 @@ pub fn default_toml() -> String {
 
 # Render rate. --fps on the command line overrides this.
 fps = {fps}
+# Render rate while nothing is moving (no sound, record stopped); keys still
+# respond immediately.
+idle_fps = {idle_fps}
 
 # "tide" (built in), a name from %APPDATA%\tide\themes\<name>.toml,
 # or a path to a theme file (relative paths are relative to this file).
@@ -546,6 +556,7 @@ net_units = "{units}"
 temp_unit = "{temp}"
 "#,
         fps = c.fps,
+        idle_fps = c.idle_fps,
         theme = c.theme,
         fft = a.fft_size,
         fmin = a.freq_min,

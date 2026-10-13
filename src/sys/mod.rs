@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
-use crate::app::{App, CPU_HIST, Gpu, NET_HIST, Proc, push_hist};
+use crate::app::{App, Battery, CPU_HIST, Gpu, NET_HIST, Proc, push_hist};
 use crate::config::{GpuSelect, GpuSource, ProcSort, StatsCfg};
 use cpu::{CpuSample, CpuSampler};
 use gpu::{GpuSample, GpuSampler};
@@ -36,6 +36,7 @@ struct Snapshot {
     gpu: Result<Vec<GpuSample>, &'static str>,
     net: NetSample,
     procs: Option<Vec<Proc>>,
+    battery: Option<Battery>,
 }
 
 pub struct Stats {
@@ -146,6 +147,7 @@ impl Sampler {
             gpu: self.gpu.as_mut().map(GpuSampler::sample).map_err(|e| *e),
             net: self.net.sample(),
             procs: all_procs.then(|| self.procs()),
+            battery: battery(),
         }
     }
 
@@ -217,7 +219,6 @@ fn apply(app: &mut App, s: Snapshot) {
             app.gpus = gpus
                 .into_iter()
                 .map(|g| Gpu {
-                    name: g.name,
                     util: g.util,
                     shared: g.shared,
                     mem_used: g.mem_used,
@@ -242,6 +243,7 @@ fn apply(app: &mut App, s: Snapshot) {
     n.down_scale = NET_MIN_SCALE;
     n.up_scale = NET_MIN_SCALE;
 
+    app.battery = s.battery;
     if let Some(procs) = s.procs {
         app.procs = procs;
     }
@@ -332,6 +334,7 @@ pub fn probe(cfg: &StatsCfg) -> String {
         "net  {} · ↓ {:.0} B/s ↑ {:.0} B/s · session ↓ {} ↑ {} bytes",
         s.net.kind, s.net.down, s.net.up, s.net.session_down, s.net.session_up
     );
+    let _ = writeln!(out, "bat  {:?}", s.battery);
     for p in s.procs.iter().flatten().take(8) {
         let _ = writeln!(
             out,
@@ -343,4 +346,22 @@ pub fn probe(cfg: &StatsCfg) -> String {
         );
     }
     out
+}
+
+/// Battery charge, or None on machines without one.
+fn battery() -> Option<Battery> {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    const NO_BATTERY: u8 = 128;
+    const UNKNOWN: u8 = 255;
+    const CHARGING: u8 = 8;
+    let mut s = SYSTEM_POWER_STATUS::default();
+    // SAFETY: out-pointer to a local.
+    unsafe { GetSystemPowerStatus(&mut s) }.ok()?;
+    if s.BatteryFlag & NO_BATTERY != 0 || s.BatteryFlag == UNKNOWN || s.BatteryLifePercent > 100 {
+        return None;
+    }
+    Some(Battery {
+        percent: s.BatteryLifePercent,
+        charging: s.BatteryFlag & CHARGING != 0,
+    })
 }

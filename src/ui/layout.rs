@@ -1,5 +1,5 @@
 //! Cell-grid layout for mockup2, with graceful degradation on small
-//! terminals. Full design size is 165×41.
+//! terminals. Full design size is 165×42: a 3-row top panel, then 18 spectrum rows.
 //!
 //! Width:  the spectrum drops bands (down to 24) so the deck keeps room for
 //!         its controls, then the deck shrinks (record scales down), then
@@ -28,10 +28,13 @@ const NET_W: u16 = 38;
 const PROC_MIN_W: u16 = 36;
 const BOTTOM_H: u16 = 12;
 const MEM_H: u16 = 5;
+/// Boxed top panel: border, one line of content, border.
+const TOP_BOXED_H: u16 = 3;
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Layout {
-    pub header: Rect,
+    /// Full-width top panel: a 3-row box, or a single plain line when height is tight.
+    pub top: Rect,
     pub spectrum: Rect,
     pub bands: u16,
     pub spec_rows: u16,
@@ -53,10 +56,7 @@ fn spec_box_w(bands: u16) -> u16 {
 pub fn compute(area: Rect, max_bands: u16, max_rows: Option<u16>) -> Layout {
     let cap = max_rows.unwrap_or(u16::MAX);
     let (w, h) = (area.width, area.height);
-    let mut l = Layout {
-        header: Rect::new(area.x, area.y, w, 1.min(h)),
-        ..Default::default()
-    };
+    let mut l = Layout::default();
 
     // --- top row widths
     let mut bands = max_bands;
@@ -70,26 +70,27 @@ pub fn compute(area: Rect, max_bands: u16, max_rows: Option<u16>) -> Layout {
     l.bands = bands;
 
     // --- vertical plan
-    // full:    header, blank, top, gap, bottom, blank, footer
-    // compact: header, top, bottom, footer
-    // no bottom row: header, blank, top, footer (blank dropped if tight)
-    let full_rows = h.saturating_sub(1 + 1 + SPEC_EXTRA_ROWS + 1 + BOTTOM_H + 1 + 1);
+    // full:    top panel (boxed), panels, gap, bottom row, gap, footer
+    // compact: top line, panels, bottom row, footer
+    // no bottom row: top panel (boxed if it fits), panels, footer
+    let full_rows = h.saturating_sub(TOP_BOXED_H + SPEC_EXTRA_ROWS + 1 + BOTTOM_H + 1 + 1);
     let compact_rows = h.saturating_sub(1 + SPEC_EXTRA_ROWS + BOTTOM_H + 1);
-    let (spec_rows, spacer, bottom) = if full_rows >= MIN_SPEC_ROWS {
-        (full_rows.min(cap), 1, true)
+    let (spec_rows, top_h_rows, spacer, bottom) = if full_rows >= MIN_SPEC_ROWS {
+        (full_rows.min(cap), TOP_BOXED_H, 1, true)
     } else if compact_rows >= MIN_SPEC_ROWS {
-        (compact_rows.min(cap), 0, true)
+        (compact_rows.min(cap), 1, 0, true)
     } else {
-        let rows = h.saturating_sub(1 + 1 + SPEC_EXTRA_ROWS + 1);
+        let rows = h.saturating_sub(TOP_BOXED_H + SPEC_EXTRA_ROWS + 1);
         if rows >= 3 {
-            (rows.min(cap), 1, false)
+            (rows.min(cap), TOP_BOXED_H, 0, false)
         } else {
-            (h.saturating_sub(1 + SPEC_EXTRA_ROWS + 1).max(1), 0, false)
+            (h.saturating_sub(1 + SPEC_EXTRA_ROWS + 1).max(1), 1, 0, false)
         }
     };
     l.spec_rows = spec_rows;
+    l.top = Rect::new(area.x, area.y, w, top_h_rows.min(h));
 
-    let top_y = area.y + 1 + spacer;
+    let top_y = area.y + top_h_rows;
     let top_h = spec_rows + SPEC_EXTRA_ROWS;
     let spec_w = spec_box_w(bands).min(w);
     l.spectrum = Rect::new(area.x, top_y, spec_w, top_h);
@@ -148,17 +149,18 @@ mod tests {
 
     #[test]
     fn full_size_matches_mock() {
-        let l = compute(Rect::new(0, 0, 165, 41), 36, None);
+        let l = compute(Rect::new(0, 0, 165, 42), 36, None);
+        assert_eq!(l.top, Rect::new(0, 0, 165, 3));
         assert_eq!(l.bands, 36);
         assert_eq!(l.spec_rows, 18);
-        assert_eq!(l.spectrum, Rect::new(0, 2, 112, 24));
-        assert_eq!(l.deck, Some(Rect::new(114, 2, 51, 24)));
-        assert_eq!(l.cpu, Some(Rect::new(0, 27, 37, 12)));
-        assert_eq!(l.mem, Some(Rect::new(39, 27, 38, 5)));
-        assert_eq!(l.gpu, Some(Rect::new(39, 33, 38, 6)));
-        assert_eq!(l.net, Some(Rect::new(79, 27, 38, 12)));
-        assert_eq!(l.procs, Some(Rect::new(119, 27, 46, 12)));
-        assert_eq!(l.footer, Some(Rect::new(0, 40, 165, 1)));
+        assert_eq!(l.spectrum, Rect::new(0, 3, 112, 24));
+        assert_eq!(l.deck, Some(Rect::new(114, 3, 51, 24)));
+        assert_eq!(l.cpu, Some(Rect::new(0, 28, 37, 12)));
+        assert_eq!(l.mem, Some(Rect::new(39, 28, 38, 5)));
+        assert_eq!(l.gpu, Some(Rect::new(39, 34, 38, 6)));
+        assert_eq!(l.net, Some(Rect::new(79, 28, 38, 12)));
+        assert_eq!(l.procs, Some(Rect::new(119, 28, 46, 12)));
+        assert_eq!(l.footer, Some(Rect::new(0, 41, 165, 1)));
     }
 
     #[test]
@@ -177,7 +179,7 @@ mod tests {
     #[test]
     fn tall_terminal_grows_the_spectrum_to_the_bottom() {
         let l = compute(Rect::new(0, 0, 188, 55), 36, None);
-        assert_eq!(l.spec_rows, 32);
+        assert_eq!(l.spec_rows, 31);
         assert_eq!(l.footer.map(|f| f.y), Some(54));
         let capped = compute(Rect::new(0, 0, 188, 55), 36, Some(18));
         assert_eq!(capped.spec_rows, 18);

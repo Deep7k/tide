@@ -20,7 +20,7 @@ pub fn draw(frame: &mut Frame, app: &App, l: &Layout) {
     let area = *buf.area();
     buf.set_style(area, Style::new().bg(th().bg).fg(th().text));
 
-    chrome::header(buf, l.header, app);
+    chrome::top_panel(buf, l.top, app);
 
     let inner = chrome::panel(
         buf,
@@ -33,12 +33,7 @@ pub fn draw(frame: &mut Frame, app: &App, l: &Layout) {
     spectrum::draw(buf, inner, app, l.spec_rows);
 
     if let Some(r) = l.deck {
-        let state = match &app.media {
-            Some(m) if m.playing => " · now spinning",
-            Some(_) => " · paused",
-            None => " · idle",
-        };
-        let inner = chrome::panel(buf, r, "²", "deck", th().accent, state);
+        let inner = chrome::panel(buf, r, "²", "deck", th().accent, "");
         deck::draw(buf, inner, app);
     }
     if let Some(r) = l.cpu {
