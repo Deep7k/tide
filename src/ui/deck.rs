@@ -7,7 +7,7 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 
 use super::{
     fmt,
-    glyphs::{Braille, Ln},
+    glyphs::{Braille, Ln, pips},
 };
 use crate::app::App;
 use crate::theme::th;
@@ -37,10 +37,8 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
     let mut vol_ln = Ln::new();
     if let Some(vol) = app.volume {
         let lit = (vol.clamp(0.0, 1.0) * 10.0).round() as usize;
-        vol_ln
-            .a("vol ", th().dim)
-            .a(&"▮".repeat(lit), th().accent)
-            .a(&"▯".repeat(10 - lit), th().track);
+        vol_ln.a("vol ", th().dim);
+        pips(&mut vol_ln, lit, th().accent);
         let level = if app.muted {
             " muted".to_string()
         } else {
@@ -48,9 +46,9 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
         };
         vol_ln.a(&level, th().text);
     }
-    let extra = format!("33⅓ rpm · {}", app.audio.bits);
+    let extra = Ln::with(&format!("33⅓ rpm · {}", app.audio.bits), th().dim);
     let gap = if vol_ln.width() == 0 { 0 } else { 3 };
-    let vol_w = vol_ln.width() + gap + extra.chars().count();
+    let vol_w = vol_ln.width() + gap + extra.width();
 
     // Progress and volume form a block centred under the record, at least as
     // wide as the design's progress line and the volume line, if the deck allows.
@@ -82,18 +80,14 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
     }
 
     if vol_w <= block_w {
-        let pad = block_w - vol_ln.width() - extra.chars().count();
-        vol_ln.a(&" ".repeat(pad), th().dim).a(&extra, th().dim);
+        let pad = block_w - vol_ln.width() - extra.width();
+        vol_ln.a(&" ".repeat(pad), th().dim).append(extra);
     }
     vol_ln.put(buf, block, 0, h - 2);
 
     let a = &app.audio;
-    let mut src = Ln::new();
-    src.a(
-        &format!("{} · {} · fft {}", a.source, fmt::khz(a.sample_rate), a.fft),
-        th().dim,
-    );
-    src.put(buf, block, 0, h - 1);
+    let src = format!("{} · {} · fft {}", a.source, fmt::khz(a.sample_rate), a.fft);
+    Ln::with(&src, th().dim).put(buf, block, 0, h - 1);
 
     // Now playing, across the top of the deck: title, artist, album (… if cut off).
     let mut song = Ln::new();

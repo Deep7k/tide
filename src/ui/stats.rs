@@ -1,6 +1,6 @@
 //! ³ cpu · ⁴ mem · ⁵ gpu · ⁶ net · ⁷ proc
 
-use ratatui::{buffer::Buffer, layout::Rect};
+use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 
 use super::{
     fmt,
@@ -21,28 +21,26 @@ pub fn cpu(buf: &mut Buffer, inner: Rect, app: &App) {
 
     let label_w = format!("c{} ", c.cores.len().saturating_sub(1)).len();
     for (i, &v) in c.cores.iter().enumerate() {
-        let mut ln = Ln::new();
-        ln.a(&format!("{:<label_w$}", format!("c{i}")), th().dim);
-        bar(
-            &mut ln,
-            v,
-            w.saturating_sub(label_w + 5),
-            if v > app.cfg.stats.cpu_hot {
-                th().cpu_hot
-            } else {
-                th().cpu
-            },
-        )
-        .a(&fmt::pct4(v), th().text);
-        ln.put(buf, inner, 0, 1 + i as u16);
+        let color = if v > app.cfg.stats.cpu_hot {
+            th().cpu_hot
+        } else {
+            th().cpu
+        };
+        bar_line(&format!("c{i}"), label_w, v, w, color).put(buf, inner, 0, 1 + i as u16);
     }
 
     let mut parts = vec![format!("{:.2} GHz", c.ghz)];
     parts.extend(c.temp_c.map(|t| fmt::temp(t, app.cfg.stats.temp_unit)));
     parts.push(format!("tide {:.1}%", c.self_use * 100.0));
+    Ln::with(&parts.join(" · "), th().dim).put(buf, inner, 0, 1 + c.cores.len() as u16);
+}
+
+/// `label` padded to `label_w`, a bar filling the rest of `w`, then the percentage.
+fn bar_line(label: &str, label_w: usize, v: f32, w: usize, color: Color) -> Ln {
     let mut ln = Ln::new();
-    ln.a(&parts.join(" · "), th().dim);
-    ln.put(buf, inner, 0, 1 + c.cores.len() as u16);
+    ln.a(&format!("{label:<label_w$}"), th().dim);
+    bar(&mut ln, v, w.saturating_sub(label_w + 5), color).a(&fmt::pct4(v), th().text);
+    ln
 }
 
 pub fn mem(buf: &mut Buffer, inner: Rect, app: &App) {
@@ -74,9 +72,7 @@ pub fn gpu(buf: &mut Buffer, inner: Rect, app: &App) {
         .as_deref()
         .or(app.gpus.is_empty().then_some("no gpu found"));
     if let Some(status) = status {
-        let mut ln = Ln::new();
-        ln.a(status, th().dim);
-        ln.put(buf, inner, 0, 0);
+        Ln::with(status, th().dim).put(buf, inner, 0, 0);
         return;
     }
     // Two rows per GPU (gpu1, gpu2, … in Windows' order), as many as fit.
@@ -84,18 +80,13 @@ pub fn gpu(buf: &mut Buffer, inner: Rect, app: &App) {
     let label_w = format!("gpu{shown} ").len();
     for (i, g) in app.gpus[..shown].iter().enumerate() {
         let y = i as u16 * 2;
-        let mut ln = Ln::new();
-        ln.a(&format!("{:<label_w$}", format!("gpu{}", i + 1)), th().dim);
-        bar(&mut ln, g.util, w.saturating_sub(label_w + 5), th().gpu).a(&fmt::pct4(g.util), th().text);
-        ln.put(buf, inner, 0, y);
+        bar_line(&format!("gpu{}", i + 1), label_w, g.util, w, th().gpu).put(buf, inner, 0, y);
 
         let kind = if g.shared { "shared" } else { "vram" };
         let mut parts = vec![format!("{kind} {}", fmt::used_total_g(g.mem_used, g.mem_total))];
         parts.extend(g.temp_c.map(|t| fmt::temp(t, app.cfg.stats.temp_unit)));
         parts.extend(g.watts.map(|p| format!("{p:.0}W")));
-        let mut ln = Ln::new();
-        ln.a(&parts.join(" · "), th().dim);
-        ln.put(buf, inner, 0, y + 1);
+        Ln::with(&parts.join(" · "), th().dim).put(buf, inner, 0, y + 1);
     }
 }
 
@@ -140,27 +131,19 @@ pub fn net(buf: &mut Buffer, inner: Rect, app: &App) {
             ln.put(buf, inner, 0, y + 1 + r as u16);
         }
     }
-    let mut ln = Ln::new();
-    ln.a(
-        &format!(
-            "session ↓ {}  ↑ {}",
-            fmt::total(n.session_down),
-            fmt::total(n.session_up)
-        ),
-        th().dim,
+    let session = format!(
+        "session ↓ {}  ↑ {}",
+        fmt::total(n.session_down),
+        fmt::total(n.session_up)
     );
-    ln.put(buf, inner, 0, 2 * (graph_rows + 1));
+    Ln::with(&session, th().dim).put(buf, inner, 0, 2 * (graph_rows + 1));
 }
 
 pub fn procs(buf: &mut Buffer, inner: Rect, app: &App) {
     // pid, cpu and mem are fixed; the name column takes the rest of the box.
     let name_w = (inner.width as usize).saturating_sub(20);
-    let mut ln = Ln::new();
-    ln.a(
-        &format!("{:<7}{:<name_w$}{:>6}{:>7}", "pid", "name", "cpu", "mem"),
-        th().dim,
-    );
-    ln.put(buf, inner, 0, 0);
+    let header = format!("{:<7}{:<name_w$}{:>6}{:>7}", "pid", "name", "cpu", "mem");
+    Ln::with(&header, th().dim).put(buf, inner, 0, 0);
 
     let fit = (inner.height as usize).saturating_sub(1);
     let rows = match app.cfg.stats.proc_rows {

@@ -2,12 +2,15 @@
 
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 
-use super::glyphs::Ln;
+use super::glyphs::{Ln, pips};
 use crate::app::App;
 use crate::theme::th;
 
+/// Battery meter turns hot below this percentage.
+const LOW_BATTERY: u8 = 20;
+
 /// Draws a rounded box with `¹ name · suffix` on its top border and returns
-/// the content area (inside the border plus 1 col of padding each side).
+/// its content area.
 pub fn panel(buf: &mut Buffer, r: Rect, hotkey: &str, name: &str, color: Color, suffix: &str) -> Rect {
     if r.width < 4 || r.height < 2 {
         return Rect::default();
@@ -25,12 +28,14 @@ pub fn panel(buf: &mut Buffer, r: Rect, hotkey: &str, name: &str, color: Color, 
         .a(suffix, th().dim)
         .a(" ", th().dim);
     // An empty name means a plain box with no title.
-    if !name.is_empty() && title.width() <= inner_w {
-        top = top_with_title(top, title, inner_w);
+    let dashes = if !name.is_empty() && title.width() <= inner_w {
+        let rest = inner_w - title.width();
+        top.append(title);
+        rest
     } else {
-        top.a(&"─".repeat(inner_w), th().border);
-    }
-    top.a("╮", th().border);
+        inner_w
+    };
+    top.a(&"─".repeat(dashes), th().border).a("╮", th().border);
     top.put(buf, all, r.x, r.y);
 
     let mut side = Ln::new();
@@ -46,15 +51,17 @@ pub fn panel(buf: &mut Buffer, r: Rect, hotkey: &str, name: &str, color: Color, 
         .a("╯", th().border);
     bottom.put(buf, all, r.x, r.bottom() - 1);
 
-    Rect::new(r.x + 2, r.y + 1, r.width.saturating_sub(4), r.height - 2)
+    content(r)
 }
 
-/// Appends `title` and fills the rest of `w` with border dashes.
-fn top_with_title(mut top: Ln, title: Ln, w: usize) -> Ln {
-    let rest = w - title.width();
-    top.append(title);
-    top.a(&"─".repeat(rest), th().border);
-    top
+/// A panel's content area: inside the border plus 1 col of padding each side.
+pub fn content(r: Rect) -> Rect {
+    Rect::new(r.x + 2, r.y + 1, r.width.saturating_sub(4), r.height.saturating_sub(2))
+}
+
+/// `r` less one column of padding each side.
+fn pad_x(r: Rect) -> Rect {
+    Rect::new(r.x + 1, r.y, r.width.saturating_sub(2), r.height)
 }
 
 /// Full-width top panel: `◆ user@host` on the left, battery and fps on the
@@ -63,7 +70,7 @@ pub fn top_panel(buf: &mut Buffer, r: Rect, app: &App) {
     let inner = if r.height >= 3 {
         panel(buf, r, "", "", th().text, "")
     } else {
-        Rect::new(r.x + 1, r.y, r.width.saturating_sub(2), r.height)
+        pad_x(r)
     };
 
     let mut left = Ln::new();
@@ -85,11 +92,8 @@ pub fn top_panel(buf: &mut Buffer, r: Rect, app: &App) {
         let lit = (b.percent as usize * 10 + 5) / 100;
         let pct = format!(" {}%", b.percent);
         let mut full = Ln::new();
-        full.a("bat ", th().dim)
-            .a(&"▮".repeat(lit), color)
-            .a(&"▯".repeat(10 - lit), th().track)
-            .bold(&pct, th().hi)
-            .a("   ", th().dim);
+        full.a("bat ", th().dim);
+        pips(&mut full, lit, color).bold(&pct, th().hi).a("   ", th().dim);
         fps(&mut full);
         let mut short = Ln::new();
         short.a("bat", th().dim).bold(&pct, th().hi).a("   ", th().dim);
@@ -107,15 +111,13 @@ pub fn top_panel(buf: &mut Buffer, r: Rect, app: &App) {
     left.put(buf, inner, 0, 0);
 }
 
-/// Battery meter turns hot below this percentage.
-const LOW_BATTERY: u8 = 20;
-
 /// Key hints, right-aligned, and a transient notice on the left.
 pub fn footer(buf: &mut Buffer, r: Rect, notice: Option<&str>) {
+    let pad = pad_x(r);
     if let Some(msg) = notice {
         let mut ln = Ln::new();
         ln.a("● ", th().accent).a(msg, th().text);
-        ln.put(buf, Rect::new(r.x + 1, r.y, r.width.saturating_sub(2), r.height), 0, 0);
+        ln.put(buf, pad, 0, 0);
     }
     let mut ln = Ln::new();
     for (i, (key, what)) in [("␣", " pause"), ("← →", " seek"), ("q", " quit")]
@@ -127,6 +129,5 @@ pub fn footer(buf: &mut Buffer, r: Rect, notice: Option<&str>) {
         }
         ln.a(key, th().text).a(what, th().dim);
     }
-    let pad = Rect::new(r.x + 1, r.y, r.width.saturating_sub(2), r.height);
     ln.put(buf, pad, pad.width.saturating_sub(ln.width() as u16), 0);
 }

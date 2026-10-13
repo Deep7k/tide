@@ -204,7 +204,8 @@ impl Capture {
 /// Reads the default output device every `DEVICE_CHECK` on its own thread.
 /// Stops when the capture that owns `shared` is dropped.
 fn watch_default_device(shared: DefaultDevice) {
-    let spawned = std::thread::Builder::new()
+    // Without the watcher, device switches still recover via cpal's errors.
+    let _ = std::thread::Builder::new()
         .name("audio-device-watch".into())
         .spawn(move || {
             let host = cpal::default_host();
@@ -216,6 +217,4 @@ fn watch_default_device(shared: DefaultDevice) {
                 }
             }
         });
-    // Without the watcher, device switches still recover via cpal's errors.
-    let _ = spawned;
 }

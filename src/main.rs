@@ -66,6 +66,7 @@ impl Write for FrameWriter {
     }
 }
 
+#[derive(Default)]
 struct Args {
     demo: bool,
     /// Overrides `fps` from the config.
@@ -83,19 +84,7 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args {
-        demo: false,
-        fps: None,
-        config: None,
-        print_config: false,
-        dump: None,
-        profile: None,
-        quit_after: None,
-        probe_audio: false,
-        probe_stats: false,
-        probe_media: false,
-        bench: None,
-    };
+    let mut args = Args::default();
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -270,19 +259,14 @@ fn event_loop(
             p.lap(phase);
         }
     };
-    let fps = cfg.fps;
-    let idle_fps = cfg.idle_fps;
-    let max_bands = cfg.spectrum.max_bands;
-    let max_rows = (cfg.spectrum.max_rows > 0).then_some(cfg.spectrum.max_rows);
+    let frame = Duration::from_secs_f64(1.0 / cfg.fps as f64);
+    let idle_frame = Duration::from_secs_f64(1.0 / cfg.idle_fps.min(cfg.fps) as f64);
     // Live mode reads audio and system stats; --demo fakes everything.
     let mut audio = (!demo_only).then(|| Audio::new(&cfg.audio));
     let stats = (!demo_only).then(|| Stats::spawn(&cfg.stats));
     let media = (!demo_only).then(|| MediaLink::spawn(&cfg.media));
-    let seek = cfg.media.seek_seconds;
     let mut app = App::new(cfg);
     let mut demo = demo_only.then(|| Demo::new(&mut app));
-    let frame = Duration::from_secs_f64(1.0 / fps as f64);
-    let idle_frame = Duration::from_secs_f64(1.0 / idle_fps.min(fps) as f64);
     let mut area = term.get_frame().area();
     let mut last = Instant::now();
     let mut next = last + frame;
@@ -300,7 +284,8 @@ fn event_loop(
             };
         }
 
-        let layout = ui::layout::compute(area, max_bands, max_rows);
+        let spectrum = &app.cfg.spectrum;
+        let layout = ui::layout::compute(area, spectrum.max_bands, spectrum.rows_cap());
         lap(prof, Phase::Layout);
         app.band_count = layout.bands as usize;
         if let Some(d) = demo.as_mut() {
@@ -345,7 +330,7 @@ fn event_loop(
                     term.resize(area)?;
                     next = Instant::now();
                 }
-                Event::Key(key) => match key_action(key, seek) {
+                Event::Key(key) => match key_action(key, app.cfg.media.seek_seconds) {
                     Some(Action::Quit) => return Ok(()),
                     Some(Action::Cmd(cmd)) => {
                         if let Some(m) = &media {
@@ -397,11 +382,7 @@ fn key_action(key: KeyEvent, seek: f64) -> Option<Action> {
 fn dump(w: u16, h: u16, cfg: &Config) -> String {
     let mut app = App::new(cfg.clone());
     let mut demo = Demo::new(&mut app);
-    let layout = ui::layout::compute(
-        Rect::new(0, 0, w, h),
-        cfg.spectrum.max_bands,
-        (cfg.spectrum.max_rows > 0).then_some(cfg.spectrum.max_rows),
-    );
+    let layout = ui::layout::compute(Rect::new(0, 0, w, h), cfg.spectrum.max_bands, cfg.spectrum.rows_cap());
     app.band_count = layout.bands as usize;
     for _ in 0..180 {
         demo.update(&mut app, 1.0 / 60.0);

@@ -58,6 +58,15 @@ pub struct DeckCfg {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(default)]
+pub struct MediaCfg {
+    /// How often now-playing, position and volume are read.
+    pub poll_ms: u64,
+    /// Seconds per ← → press.
+    pub seek_seconds: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct StatsCfg {
     pub refresh_ms: u64,
     pub proc_refresh_ms: u64,
@@ -204,13 +213,11 @@ impl Default for SpectrumCfg {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(default)]
-pub struct MediaCfg {
-    /// How often now-playing, position and volume are read.
-    pub poll_ms: u64,
-    /// Seconds per ← → press.
-    pub seek_seconds: f64,
+impl SpectrumCfg {
+    /// `max_rows` as a height cap; None fills the terminal.
+    pub fn rows_cap(&self) -> Option<u16> {
+        (self.max_rows > 0).then_some(self.max_rows)
+    }
 }
 
 impl Default for MediaCfg {
@@ -268,17 +275,6 @@ impl StatsCfg {
 /// Lowercase TOML name of a simple enum value, e.g. `ProcSort::Cpu` → "cpu".
 fn lower<T: std::fmt::Debug>(v: T) -> String {
     format!("{v:?}").to_ascii_lowercase()
-}
-
-impl GpuSource {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Nvml => "nvml",
-            Self::Counters => "counters",
-            Self::Off => "off",
-        }
-    }
 }
 
 impl Config {
@@ -587,7 +583,7 @@ temp_unit = "{temp}"
         gpus = st.gpus.to_toml(),
         units = lower(st.net_units),
         temp = lower(st.temp_unit),
-        gpu = st.gpu_source.as_str(),
+        gpu = lower(st.gpu_source),
         net = st.net_interface,
     )
 }

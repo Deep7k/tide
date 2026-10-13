@@ -15,6 +15,7 @@ use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{IMMDeviceEnumerator, MMDeviceEnumerator, eConsole, eRender};
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx};
 use windows::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime;
+use windows::core::HSTRING;
 
 use crate::app::{App, Cmd, Media};
 use crate::config::MediaCfg;
@@ -129,16 +130,13 @@ impl Source {
     fn track(&mut self) -> Option<Track> {
         let s = self.session()?;
         let props = s.TryGetMediaPropertiesAsync().and_then(|op| op.join()).ok()?;
-        let title = props.Title().map(|h| h.to_string()).unwrap_or_default();
-        let playing = s
-            .GetPlaybackInfo()
-            .and_then(|p| p.PlaybackStatus())
-            .is_ok_and(|st| st == Status::Playing);
+        let title = text(props.Title());
+        let playing = is_playing(&s);
         let (pos, dur) = timeline(&s, playing).unwrap_or((0.0, 0.0));
         Some(Track {
             title: if title.is_empty() { app_name(&s) } else { title },
-            artist: props.Artist().map(|h| h.to_string()).unwrap_or_default(),
-            album: props.AlbumTitle().map(|h| h.to_string()).unwrap_or_default(),
+            artist: text(props.Artist()),
+            album: text(props.AlbumTitle()),
             pos,
             dur,
             playing,
@@ -158,11 +156,7 @@ impl Source {
                 (!ok).then(|| format!("{app} doesn't accept play/pause"))
             }
             Cmd::Seek(delta) => {
-                let playing = s
-                    .GetPlaybackInfo()
-                    .and_then(|p| p.PlaybackStatus())
-                    .is_ok_and(|st| st == Status::Playing);
-                let Some((pos, dur)) = timeline(&s, playing).filter(|&(_, d)| d > 0.0) else {
+                let Some((pos, dur)) = timeline(&s, is_playing(&s)).filter(|&(_, d)| d > 0.0) else {
                     return Some(format!("{app} doesn't report a position"));
                 };
                 let start = s
@@ -178,6 +172,12 @@ impl Source {
             }
         }
     }
+}
+
+fn is_playing(s: &Session) -> bool {
+    s.GetPlaybackInfo()
+        .and_then(|p| p.PlaybackStatus())
+        .is_ok_and(|st| st == Status::Playing)
 }
 
 /// (position, duration) in seconds. Apps only update the position now and
@@ -207,8 +207,12 @@ fn now_ticks() -> i64 {
 /// Friendly name of the app behind a session: "Spotify.exe" → "Spotify",
 /// "Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic" → "ZuneMusic".
 fn app_name(s: &Session) -> String {
-    let id = s.SourceAppUserModelId().map(|h| h.to_string()).unwrap_or_default();
-    app_name_from_id(&id)
+    app_name_from_id(&text(s.SourceAppUserModelId()))
+}
+
+/// A WinRT string property, or "" if it couldn't be read.
+fn text(h: windows::core::Result<HSTRING>) -> String {
+    h.map(|h| h.to_string()).unwrap_or_default()
 }
 
 fn app_name_from_id(id: &str) -> String {

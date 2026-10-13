@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
     backend::{CrosstermBackend, TestBackend},
+    buffer::Buffer,
     layout::Rect,
 };
 
@@ -18,6 +19,7 @@ use crate::audio::dsp::Analyzer;
 use crate::config::Config;
 use crate::demo::Demo;
 use crate::ui;
+use crate::ui::chrome::content;
 
 const FRAMES: usize = 600;
 
@@ -54,8 +56,7 @@ fn us(d: Duration) -> f64 {
 
 pub fn run(cfg: &Config, w: u16, h: u16) -> String {
     let area = Rect::new(0, 0, w, h);
-    let rows = (cfg.spectrum.max_rows > 0).then_some(cfg.spectrum.max_rows);
-    let layout = ui::layout::compute(area, cfg.spectrum.max_bands, rows);
+    let layout = ui::layout::compute(area, cfg.spectrum.max_bands, cfg.spectrum.rows_cap());
     let mut app = App::new(cfg.clone());
     let mut demo = Demo::new(&mut app);
     app.band_count = layout.bands as usize;
@@ -91,10 +92,9 @@ pub fn run(cfg: &Config, w: u16, h: u16) -> String {
     let bytes = bytes.get();
 
     // Per-panel build cost, drawn straight into a buffer.
-    let mut buf = ratatui::buffer::Buffer::empty(area);
-    let inner = |r: Rect| Rect::new(r.x + 2, r.y + 1, r.width.saturating_sub(4), r.height.saturating_sub(2));
+    let mut buf = Buffer::empty(area);
     let mut panels: Vec<(&str, Stat)> = Vec::new();
-    let mut time = |name: &'static str, f: &mut dyn FnMut(&mut ratatui::buffer::Buffer)| {
+    let mut time = |name: &'static str, f: &mut dyn FnMut(&mut Buffer)| {
         let mut s = Stat(vec![]);
         for _ in 0..FRAMES / 4 {
             let t = Instant::now();
@@ -104,19 +104,19 @@ pub fn run(cfg: &Config, w: u16, h: u16) -> String {
         panels.push((name, s));
     };
     time("  spectrum + vu", &mut |b| {
-        ui::spectrum::draw(b, inner(layout.spectrum), &app, layout.spec_rows)
+        ui::spectrum::draw(b, content(layout.spectrum), &app, layout.spec_rows)
     });
     if let Some(d) = layout.deck {
-        time("  deck (record)", &mut |b| ui::deck::draw(b, inner(d), &app));
+        time("  deck (record)", &mut |b| ui::deck::draw(b, content(d), &app));
     }
     if let Some(r) = layout.cpu {
-        time("  cpu", &mut |b| ui::stats::cpu(b, inner(r), &app));
+        time("  cpu", &mut |b| ui::stats::cpu(b, content(r), &app));
     }
     if let Some(r) = layout.net {
-        time("  net", &mut |b| ui::stats::net(b, inner(r), &app));
+        time("  net", &mut |b| ui::stats::net(b, content(r), &app));
     }
     if let Some(r) = layout.procs {
-        time("  proc", &mut |b| ui::stats::procs(b, inner(r), &app));
+        time("  proc", &mut |b| ui::stats::procs(b, content(r), &app));
     }
 
     let mut fft = Stat(vec![]);

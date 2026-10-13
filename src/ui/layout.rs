@@ -11,7 +11,7 @@
 
 use ratatui::layout::Rect;
 
-pub const BAND_W: u16 = 3;
+const BAND_W: u16 = 3;
 /// Fewest bands kept before the deck is hidden instead.
 const MIN_BANDS_WITH_DECK: u16 = 24;
 const MIN_SPEC_ROWS: u16 = 8;

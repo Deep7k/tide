@@ -82,8 +82,7 @@ fn kind(row: &MIB_IF_ROW2) -> String {
 }
 
 fn alias(row: &MIB_IF_ROW2) -> String {
-    let len = row.Alias.iter().position(|&c| c == 0).unwrap_or(row.Alias.len());
-    String::from_utf16_lossy(&row.Alias[..len])
+    super::from_wide(&row.Alias)
 }
 
 /// The interface Windows would use to reach the internet.

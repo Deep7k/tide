@@ -98,8 +98,8 @@ pub fn tilt_db(hz: f32, db_per_octave: f32) -> f32 {
 /// range follows recent peaks, so quiet tracks and low per-app volume still
 /// fill the display; without it the top is 0 dBFS.
 pub struct Agc {
-    pub enabled: bool,
-    pub range_db: f32,
+    enabled: bool,
+    range_db: f32,
     pub ceiling_db: f32,
 }
 
@@ -126,7 +126,7 @@ impl Agc {
     }
 }
 
-pub fn to_db(amp: f32) -> f32 {
+fn to_db(amp: f32) -> f32 {
     20.0 * amp.max(1e-6).log10()
 }
 

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
-use crate::app::{App, Battery, CPU_HIST, Gpu, NET_HIST, Proc, push_hist};
+use crate::app::{App, Battery, CPU_HIST, NET_HIST, Proc, push_hist};
 use crate::config::{GpuSelect, GpuSource, ProcSort, StatsCfg};
 use cpu::{CpuSample, CpuSampler};
 use gpu::{GpuSample, GpuSampler};
@@ -216,17 +216,7 @@ fn apply(app: &mut App, s: Snapshot) {
     match s.gpu {
         Ok(gpus) => {
             app.gpu_status = None;
-            app.gpus = gpus
-                .into_iter()
-                .map(|g| Gpu {
-                    util: g.util,
-                    shared: g.shared,
-                    mem_used: g.mem_used,
-                    mem_total: g.mem_total,
-                    temp_c: g.temp_c,
-                    watts: g.watts,
-                })
-                .collect();
+            app.gpus = gpus.into_iter().map(|g| g.stats).collect();
         }
         Err(why) => app.gpu_status = Some(why.into()),
     }
@@ -274,7 +264,8 @@ pub fn probe(cfg: &StatsCfg) -> String {
     let _ = sampler.cpu.as_mut().map(CpuSampler::sample);
     let cpu_t = t.elapsed();
     let s = snap.expect("sampled");
-    let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+    let mib = |b: u64| b as f64 / (1u64 << 20) as f64;
+    let gib = |b: u64| mib(b) / 1024.0;
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -299,7 +290,7 @@ pub fn probe(cfg: &StatsCfg) -> String {
         out,
         "tide cpu {:.2}% · {:.0} MiB",
         s.self_use * 100.0,
-        s.self_bytes as f64 / 1048576.0
+        mib(s.self_bytes)
     );
     let _ = writeln!(
         out,
@@ -311,11 +302,11 @@ pub fn probe(cfg: &StatsCfg) -> String {
     );
     match &s.gpu {
         Ok(gpus) => {
-            for g in gpus {
+            for GpuSample { name, stats: g } in gpus {
                 let _ = writeln!(
                     out,
                     "gpu  {} · {:.1}% · {} {:.2}/{:.1} GiB · temp {:?} · watts {:?}",
-                    g.name,
+                    name,
                     g.util * 100.0,
                     if g.shared { "shared" } else { "vram" },
                     gib(g.mem_used),
@@ -342,10 +333,16 @@ pub fn probe(cfg: &StatsCfg) -> String {
             p.pid,
             p.name,
             p.cpu,
-            p.mem as f64 / 1048576.0
+            mib(p.mem)
         );
     }
     out
+}
+
+/// A NUL-terminated UTF-16 buffer from a Win32 struct, as a String.
+fn from_wide(buf: &[u16]) -> String {
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..len])
 }
 
 /// Battery charge, or None on machines without one.

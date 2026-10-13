@@ -87,12 +87,7 @@ impl Profile {
 
 /// User + kernel CPU time of this process so far.
 fn process_cpu() -> Duration {
-    let (mut c, mut e, mut k, mut u) = (
-        FILETIME::default(),
-        FILETIME::default(),
-        FILETIME::default(),
-        FILETIME::default(),
-    );
+    let [mut c, mut e, mut k, mut u] = [FILETIME::default(); 4];
     // SAFETY: out-pointers to locals; the pseudo-handle needs no closing.
     if unsafe { GetProcessTimes(GetCurrentProcess(), &mut c, &mut e, &mut k, &mut u) }.is_err() {
         return Duration::ZERO;

@@ -1,5 +1,5 @@
-//! Display state. Data sources (the demo generator now; audio, system stats
-//! and SMTC later) write into it; the UI only reads it.
+//! Display state. Data sources (the demo generator, or live audio, system
+//! stats and SMTC) write into it; the UI only reads it.
 
 use std::collections::VecDeque;
 use std::f32::consts::TAU;

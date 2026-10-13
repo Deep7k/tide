@@ -13,6 +13,7 @@ use windows::Wdk::Graphics::Direct3D::{
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1};
 
 use super::pdh::{Counter, Query};
+use crate::app::Gpu;
 use crate::config::{GpuSelect, GpuSource};
 
 const NVIDIA_VENDOR: u32 = 0x10DE;
@@ -23,15 +24,10 @@ const INTEGRATED_BELOW: u64 = 512 << 20;
 /// laptop dGPU can stay powered down.
 const AWAKE_UTIL: f32 = 0.01;
 
+/// One adapter's readings, plus its short name for `--probe-stats`.
 pub struct GpuSample {
     pub name: String,
-    pub util: f32,
-    /// Integrated GPUs report shared memory; discrete ones dedicated VRAM.
-    pub shared: bool,
-    pub mem_used: u64,
-    pub mem_total: u64,
-    pub temp_c: Option<f32>,
-    pub watts: Option<f32>,
+    pub stats: Gpu,
 }
 
 struct Adapter {
@@ -88,8 +84,7 @@ impl GpuSampler {
         let shared = self.shared.map(Counter::array).unwrap_or_default();
 
         let mut out = Vec::with_capacity(self.adapters.len());
-        for i in 0..self.adapters.len() {
-            let a = &self.adapters[i];
+        for a in &self.adapters {
             let util = engine_util(&engines, &a.luid);
             let mem_used = sum_for(if a.shared { &shared } else { &dedicated }, &a.luid);
             let temp_c = a.kmt.and_then(kmt_temperature);
@@ -99,33 +94,39 @@ impl GpuSampler {
                     GpuSource::Auto => util >= AWAKE_UTIL,
                     GpuSource::Counters | GpuSource::Off => false,
                 };
-            let (name, shared_mem, mem_total) = (a.name.clone(), a.shared, a.mem_total);
-            let (nv_temp, watts) = if want_nvml { self.nvml_readings() } else { (None, None) };
+            let (nv_temp, watts) = if want_nvml {
+                nvml_readings(&mut self.nvml)
+            } else {
+                (None, None)
+            };
             out.push(GpuSample {
-                name,
-                util,
-                shared: shared_mem,
-                mem_used,
-                mem_total,
-                temp_c: temp_c.or(nv_temp),
-                watts,
+                name: a.name.clone(),
+                stats: Gpu {
+                    util,
+                    shared: a.shared,
+                    mem_used,
+                    mem_total: a.mem_total,
+                    temp_c: temp_c.or(nv_temp),
+                    watts,
+                },
             });
         }
         out
     }
+}
 
-    fn nvml_readings(&mut self) -> (Option<f32>, Option<f32>) {
-        use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
-        let Some(nvml) = self.nvml.get_or_insert_with(|| Nvml::init().ok()) else {
-            return (None, None);
-        };
-        let Ok(dev) = nvml.device_by_index(0) else {
-            return (None, None);
-        };
-        let temp = dev.temperature(TemperatureSensor::Gpu).ok().map(|t| t as f32);
-        let watts = dev.power_usage().ok().map(|mw| mw as f32 / 1000.0);
-        (temp, watts)
-    }
+/// NVIDIA temperature and watts, loading NVML on first use.
+fn nvml_readings(nvml: &mut Option<Option<Nvml>>) -> (Option<f32>, Option<f32>) {
+    use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
+    let Some(nvml) = nvml.get_or_insert_with(|| Nvml::init().ok()) else {
+        return (None, None);
+    };
+    let Ok(dev) = nvml.device_by_index(0) else {
+        return (None, None);
+    };
+    let temp = dev.temperature(TemperatureSensor::Gpu).ok().map(|t| t as f32);
+    let watts = dev.power_usage().ok().map(|mw| mw as f32 / 1000.0);
+    (temp, watts)
 }
 
 impl Drop for GpuSampler {
@@ -199,12 +200,7 @@ fn adapters() -> Vec<Adapter> {
         if out.iter().any(|a| a.luid == luid) {
             continue;
         }
-        let len = desc
-            .Description
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(desc.Description.len());
-        let full_name = String::from_utf16_lossy(&desc.Description[..len]);
+        let full_name = super::from_wide(&desc.Description);
         let dedicated = desc.DedicatedVideoMemory as u64;
         let shared = dedicated < INTEGRATED_BELOW;
         let mut open = D3DKMT_OPENADAPTERFROMLUID {
@@ -257,7 +253,7 @@ fn choose(all: Vec<Adapter>, select: &GpuSelect) -> Vec<Adapter> {
 }
 
 /// "NVIDIA T1200 Laptop GPU" → "t1200", "NVIDIA GeForce RTX 4070" → "rtx4070".
-pub fn short_name(full: &str) -> String {
+fn short_name(full: &str) -> String {
     const NOISE: [&str; 8] = [
         "nvidia", "geforce", "amd", "radeon", "intel", "laptop", "gpu", "graphics",
     ];

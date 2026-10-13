@@ -29,9 +29,9 @@ impl Query {
     }
 
     /// Takes a sample. Rate counters need two samples before they have a value.
-    pub fn collect(&self) -> bool {
+    pub fn collect(&self) {
         // SAFETY: valid query handle.
-        unsafe { PdhCollectQueryData(self.0) == 0 }
+        unsafe { PdhCollectQueryData(self.0) };
     }
 }
 

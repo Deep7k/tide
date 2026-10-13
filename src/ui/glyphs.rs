@@ -28,6 +28,13 @@ impl Ln {
         Self::default()
     }
 
+    /// A line holding one run of text.
+    pub fn with(t: &str, c: Color) -> Self {
+        let mut ln = Self::new();
+        ln.a(t, c);
+        ln
+    }
+
     pub fn a(&mut self, t: &str, c: Color) -> &mut Self {
         self.push(t, Style::new().fg(c))
     }
@@ -105,19 +112,19 @@ pub fn bar(ln: &mut Ln, f: f32, w: usize, c: Color) -> &mut Ln {
     ln
 }
 
-/// One-row sparkline of the last `w` values (0..1). Short history is
-/// left-padded so the row keeps its width.
-pub fn spark<'a>(ln: &'a mut Ln, vals: &[f32], w: usize, c: Color) -> &'a mut Ln {
-    let vals = &vals[vals.len().saturating_sub(w)..];
-    ln.a(&" ".repeat(w - vals.len()), c);
-    for v in vals {
-        ln.a(E[((v.clamp(0.0, 1.0) * 8.0).round() as usize).max(1)], c);
-    }
-    ln
+/// Ten-step `▮▮▮▯▯` meter with `lit` steps on.
+pub fn pips(ln: &mut Ln, lit: usize, c: Color) -> &mut Ln {
+    ln.a(&"▮".repeat(lit), c).a(&"▯".repeat(10 - lit), th().track)
 }
 
-/// Multi-row sparkline of the last `w` values, top row first (8 levels per row;
-/// the mock's net graphs are the 2-row case).
+/// One-row sparkline of the last `w` values (0..1).
+pub fn spark<'a>(ln: &'a mut Ln, vals: &[f32], w: usize, c: Color) -> &'a mut Ln {
+    ln.append(spark_rows(vals, w, 1, c).remove(0))
+}
+
+/// Multi-row sparkline of the last `w` values (0..1), top row first (8 levels
+/// per row; the mock's net graphs are the 2-row case). Short history is
+/// left-padded so the rows keep their width.
 pub fn spark_rows(vals: &[f32], w: usize, rows: usize, c: Color) -> Vec<Ln> {
     let vals = &vals[vals.len().saturating_sub(w)..];
     let mut out: Vec<Ln> = (0..rows).map(|_| Ln::new()).collect();
@@ -189,28 +196,24 @@ impl Braille {
 mod tests {
     use super::*;
 
-    fn text(ln: &Ln) -> String {
-        ln.spans.iter().map(|s| s.content.as_ref()).collect()
-    }
-
     #[test]
     fn bar_eighths() {
         let mut ln = Ln::new();
         bar(&mut ln, 0.5, 4, Color::Red);
-        assert_eq!(text(&ln), "██░░");
+        assert_eq!(ln.text(), "██░░");
         let mut ln = Ln::new();
         bar(&mut ln, 0.3, 4, Color::Red); // 9.6 → 10 eighths = 1 full + 2/8
-        assert_eq!(text(&ln), "█▎░░");
+        assert_eq!(ln.text(), "█▎░░");
         let mut ln = Ln::new();
         bar(&mut ln, 1.0, 3, Color::Red);
-        assert_eq!(text(&ln), "███");
+        assert_eq!(ln.text(), "███");
     }
 
     #[test]
     fn spark_pads_short_history() {
         let mut ln = Ln::new();
         spark(&mut ln, &[0.0, 1.0], 4, Color::Red);
-        assert_eq!(text(&ln), "  ▁█");
+        assert_eq!(ln.text(), "  ▁█");
         assert_eq!(ln.width(), 4);
     }
 
@@ -218,8 +221,8 @@ mod tests {
     fn spark_rows_splits_levels_across_rows() {
         let rows = spark_rows(&[0.25, 0.75, 1.0], 3, 2, Color::Red);
         let (top, bot) = (&rows[0], &rows[1]);
-        assert_eq!(text(bot), "▄██");
-        assert_eq!(text(top), " ▄█");
+        assert_eq!(bot.text(), "▄██");
+        assert_eq!(top.text(), " ▄█");
     }
 
     #[test]
@@ -228,6 +231,6 @@ mod tests {
         b.set(0, 0);
         b.set(1, 3);
         let rows = b.rows(|_, _| Color::Red);
-        assert_eq!(text(&rows[0]), "\u{2881}");
+        assert_eq!(rows[0].text(), "\u{2881}");
     }
 }

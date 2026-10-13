@@ -22,7 +22,7 @@ pub struct CpuSampler {
     base_mhz: Option<Counter>,
     /// Logical processor indices (group·64 + bit) belonging to each physical core.
     cores: Vec<Vec<usize>>,
-    pub logical: usize,
+    logical: usize,
 }
 
 impl CpuSampler {

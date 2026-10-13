@@ -54,9 +54,7 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App, rows: u16) {
             }
         }
     }
-    let mut ln = Ln::new();
-    ln.a(&axis.into_iter().collect::<String>(), th().dim);
-    ln.put(buf, inner, 0, rows);
+    Ln::with(&axis.into_iter().collect::<String>(), th().dim).put(buf, inner, 0, rows);
 
     // VU meters after one blank row
     let vu_w = (inner.width as usize).saturating_sub(12);
