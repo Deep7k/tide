@@ -1,0 +1,12 @@
+{
+  "terminal.integrated.env.windows": {
+    "RUSTUP_HOME": "${workspaceFolder}\\.toolchain\\rustup",
+    "CARGO_HOME": "${workspaceFolder}\\.toolchain\\cargo",
+    "PATH": "${workspaceFolder}\\.toolchain\\cargo\\bin;${env:PATH}"
+  },
+  "rust-analyzer.server.extraEnv": {
+    "RUSTUP_HOME": "${workspaceFolder}\\.toolchain\\rustup",
+    "CARGO_HOME": "${workspaceFolder}\\.toolchain\\cargo",
+    "PATH": "${workspaceFolder}\\.toolchain\\cargo\\bin;${env:PATH}"
+  }
+}
