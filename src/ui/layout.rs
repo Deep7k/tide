@@ -10,7 +10,7 @@
 use ratatui::layout::Rect;
 
 pub const BAND_W: u16 = 3;
-pub const MAX_BANDS: u16 = 36;
+/// Fewest bands kept before the deck is hidden instead.
 const MIN_BANDS_WITH_DECK: u16 = 24;
 pub const MAX_SPEC_ROWS: u16 = 18;
 const MIN_SPEC_ROWS: u16 = 8;
@@ -45,7 +45,8 @@ fn spec_box_w(bands: u16) -> u16 {
     bands * BAND_W + 4
 }
 
-pub fn compute(area: Rect) -> Layout {
+/// `max_bands` is the band count at full width (36 in the design).
+pub fn compute(area: Rect, max_bands: u16) -> Layout {
     let (w, h) = (area.width, area.height);
     let mut l = Layout {
         header: Rect::new(area.x, area.y, w, 1.min(h)),
@@ -53,13 +54,13 @@ pub fn compute(area: Rect) -> Layout {
     };
 
     // --- top row widths
-    let mut bands = MAX_BANDS;
-    while bands > MIN_BANDS_WITH_DECK && w < spec_box_w(bands) + GAP_X + DECK_MIN_W {
+    let mut bands = max_bands;
+    while bands > MIN_BANDS_WITH_DECK.min(max_bands) && w < spec_box_w(bands) + GAP_X + DECK_MIN_W {
         bands -= 1;
     }
     let show_deck = w >= spec_box_w(bands) + GAP_X + DECK_MIN_W;
     if !show_deck {
-        bands = (w.saturating_sub(4) / BAND_W).clamp(1, MAX_BANDS);
+        bands = (w.saturating_sub(4) / BAND_W).clamp(1, max_bands);
     }
     l.bands = bands;
 
@@ -130,7 +131,7 @@ mod tests {
 
     #[test]
     fn full_size_matches_mock() {
-        let l = compute(Rect::new(0, 0, 165, 41));
+        let l = compute(Rect::new(0, 0, 165, 41), 36);
         assert_eq!(l.bands, 36);
         assert_eq!(l.spec_rows, 18);
         assert_eq!(l.spectrum, Rect::new(0, 2, 112, 24));
@@ -145,7 +146,7 @@ mod tests {
 
     #[test]
     fn default_windows_terminal_size() {
-        let l = compute(Rect::new(0, 0, 120, 30));
+        let l = compute(Rect::new(0, 0, 120, 30), 36);
         assert!(l.deck.is_some());
         assert_eq!(l.bands, 28);
         assert!(l.net.is_some() && l.procs.is_none());
@@ -155,7 +156,7 @@ mod tests {
 
     #[test]
     fn footer_shown_without_bottom_row() {
-        let l = compute(Rect::new(0, 0, 90, 24));
+        let l = compute(Rect::new(0, 0, 90, 24), 36);
         assert!(l.cpu.is_none());
         assert_eq!(l.footer.map(|f| f.y), Some(23));
     }
@@ -165,7 +166,7 @@ mod tests {
         for w in 10..=200 {
             for h in 5..=60 {
                 let area = Rect::new(0, 0, w, h);
-                let l = compute(area);
+                let l = compute(area, 36);
                 for r in [Some(l.spectrum), l.deck, l.cpu, l.mem, l.gpu, l.net, l.procs, l.footer]
                     .into_iter()
                     .flatten()

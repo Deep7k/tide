@@ -4,7 +4,7 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 
 use super::{fmt, glyphs::Ln};
 use crate::app::App;
-use crate::theme::{BORDER, CYAN, DIM, HI, TEXT};
+use crate::theme::th;
 
 /// Draws a rounded box with `¹ name · suffix` on its top border and returns
 /// the content area (inside the border plus 1 col of padding each side).
@@ -15,31 +15,34 @@ pub fn panel(buf: &mut Buffer, r: Rect, hotkey: &str, name: &str, color: Color, 
     let all = *buf.area();
     let inner_w = (r.width - 2) as usize;
     let mut top = Ln::new();
-    top.a("╭", BORDER);
+    top.a("╭", th().border);
     let mut title = Ln::new();
     title
-        .a(" ", DIM)
-        .a(hotkey, DIM)
-        .a(" ", DIM)
+        .a(" ", th().dim)
+        .a(hotkey, th().dim)
+        .a(" ", th().dim)
         .a(name, color)
-        .a(suffix, DIM)
-        .a(" ", DIM);
+        .a(suffix, th().dim)
+        .a(" ", th().dim);
     if title.width() <= inner_w {
         top = top_with_title(top, title, inner_w);
     } else {
-        top.a(&"─".repeat(inner_w), BORDER);
+        top.a(&"─".repeat(inner_w), th().border);
     }
-    top.a("╮", BORDER);
+    top.a("╮", th().border);
     top.put(buf, all, r.x, r.y);
 
     let mut side = Ln::new();
-    side.a("│", BORDER);
+    side.a("│", th().border);
     for y in r.y + 1..r.bottom() - 1 {
         side.put(buf, all, r.x, y);
         side.put(buf, all, r.right() - 1, y);
     }
     let mut bottom = Ln::new();
-    bottom.a("╰", BORDER).a(&"─".repeat(inner_w), BORDER).a("╯", BORDER);
+    bottom
+        .a("╰", th().border)
+        .a(&"─".repeat(inner_w), th().border)
+        .a("╯", th().border);
     bottom.put(buf, all, r.x, r.bottom() - 1);
 
     Rect::new(r.x + 2, r.y + 1, r.width.saturating_sub(4), r.height - 2)
@@ -49,23 +52,23 @@ pub fn panel(buf: &mut Buffer, r: Rect, hotkey: &str, name: &str, color: Color, 
 fn top_with_title(mut top: Ln, title: Ln, w: usize) -> Ln {
     let rest = w - title.width();
     top.append(title);
-    top.a(&"─".repeat(rest), BORDER);
+    top.a(&"─".repeat(rest), th().border);
     top
 }
 
 /// `▶ Title  ·  Artist  ·  Album` on the left, audio info on the right.
 pub fn header(buf: &mut Buffer, r: Rect, app: &App) {
     let mut left = Ln::new();
-    left.a("▶ ", CYAN);
+    left.a("▶ ", th().accent);
     match &app.media {
         Some(m) => {
-            left.bold(&m.title, HI);
+            left.bold(&m.title, th().hi);
             for part in [&m.artist, &m.album].into_iter().filter(|s| !s.is_empty()) {
-                left.a("  ·  ", DIM).a(part, DIM);
+                left.a("  ·  ", th().dim).a(part, th().dim);
             }
         }
         None => {
-            left.a("—", DIM);
+            left.a("—", th().dim);
         }
     }
     let a = &app.audio;
@@ -77,7 +80,7 @@ pub fn header(buf: &mut Buffer, r: Rect, app: &App) {
         app.fps
     );
     let mut right = Ln::new();
-    right.a(&info, DIM);
+    right.a(&info, th().dim);
 
     // 1 col of padding each side; the right text yields to the title.
     let pad = Rect::new(r.x + 1, r.y, r.width.saturating_sub(2), r.height);
@@ -96,9 +99,9 @@ pub fn footer(buf: &mut Buffer, r: Rect) {
         .enumerate()
     {
         if i > 0 {
-            ln.a("  ", DIM);
+            ln.a("  ", th().dim);
         }
-        ln.a(key, TEXT).a(what, DIM);
+        ln.a(key, th().text).a(what, th().dim);
     }
     let pad = Rect::new(r.x + 1, r.y, r.width.saturating_sub(2), r.height);
     ln.put(buf, pad, pad.width.saturating_sub(ln.width() as u16), 0);

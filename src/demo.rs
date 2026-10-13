@@ -8,8 +8,6 @@ const GIB: f64 = 1024.0 * MIB;
 const BPM: f64 = 118.0;
 /// Demo net values are 0..1 in the mock; 1.0 = 8 MB/s.
 const NET_FULL: f64 = 8.0 * MIB;
-/// Stats and sparklines tick every 500 ms.
-const SAMPLE_S: f64 = 0.5;
 
 const PROCS: [(u32, &str, f32, f64); 7] = [
     (18244, "Spotify.exe", 6.2, 412.0 * MIB),
@@ -150,8 +148,9 @@ impl Demo {
 
         // histories
         self.since_sample += dt;
-        if self.since_sample >= SAMPLE_S {
-            self.since_sample -= SAMPLE_S;
+        let sample_s = app.cfg.stats.refresh_ms as f64 / 1000.0;
+        if self.since_sample >= sample_s {
+            self.since_sample -= sample_s;
             push_hist(&mut app.cpu.hist, app.cpu.total, CPU_HIST);
             push_hist(&mut app.net.down_hist, app.net.down, NET_HIST);
             push_hist(&mut app.net.up_hist, app.net.up, NET_HIST);

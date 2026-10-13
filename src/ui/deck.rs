@@ -9,7 +9,7 @@ use super::{
     glyphs::{Braille, Ln},
 };
 use crate::app::App;
-use crate::theme::{CYAN, DIM, HI, TEXT, TRACK, VIZ_GROOVE, VIZ_RIM};
+use crate::theme::th;
 
 /// The mock's record is 80×80 dots with outer radius 31; every radius below
 /// is in those units and scales with the record.
@@ -38,15 +38,15 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
         if w >= 2 {
             let k = ((m.pos / m.dur.max(1.0)).clamp(0.0, 1.0) * (w - 1) as f64).round() as usize;
             let mut ln = Ln::new();
-            ln.a(&pos, TEXT).a(" ", TEXT);
+            ln.a(&pos, th().text).a(" ", th().text);
             for i in 0..w {
                 match i.cmp(&k) {
-                    std::cmp::Ordering::Less => ln.a("━", CYAN),
-                    std::cmp::Ordering::Equal => ln.a("●", HI),
-                    std::cmp::Ordering::Greater => ln.a("─", TRACK),
+                    std::cmp::Ordering::Less => ln.a("━", th().accent),
+                    std::cmp::Ordering::Equal => ln.a("●", th().hi),
+                    std::cmp::Ordering::Greater => ln.a("─", th().track),
                 };
             }
-            ln.a(" ", DIM).a(&dur, DIM);
+            ln.a(" ", th().dim).a(&dur, th().dim);
             ln.put(buf, inner, 0, inner.height - 2);
         }
     }
@@ -54,14 +54,14 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
     let mut ln = Ln::new();
     if let Some(vol) = app.volume {
         let lit = (vol.clamp(0.0, 1.0) * 10.0).round() as usize;
-        ln.a("vol ", DIM)
-            .a(&"▮".repeat(lit), CYAN)
-            .a(&"▯".repeat(10 - lit), TRACK);
-        ln.a(&format!(" {}%   ", (vol * 100.0).round() as i32), TEXT);
+        ln.a("vol ", th().dim)
+            .a(&"▮".repeat(lit), th().accent)
+            .a(&"▯".repeat(10 - lit), th().track);
+        ln.a(&format!(" {}%   ", (vol * 100.0).round() as i32), th().text);
     }
     let extra = format!("33⅓ rpm · {}", app.audio.bits);
     if ln.width() + extra.chars().count() <= inner.width as usize {
-        ln.a(&extra, DIM);
+        ln.a(&extra, th().dim);
     }
     ln.put(buf, inner, 0, inner.height - 1);
 }
@@ -105,11 +105,11 @@ fn record(dots: usize, rot: f32) -> Vec<Ln> {
     g.rows(|col, row| {
         let d = dist((col * 2 + 1) as f32, (row * 4 + 2) as f32);
         if d < 10.0 {
-            CYAN
+            th().record_label
         } else if d > RADIUS - 2.0 {
-            VIZ_RIM
+            th().record_rim
         } else {
-            VIZ_GROOVE
+            th().record_groove
         }
     })
 }

@@ -13,10 +13,6 @@ use std::time::{Duration, Instant};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{ErrorKind, SampleFormat};
 
-/// Frames kept per channel: enough for one FFT window plus slack.
-pub const RING_FRAMES: usize = 16_384;
-/// WASAPI loopback delivers nothing while nothing plays; older data counts as silence.
-const STALE_AFTER: Duration = Duration::from_millis(150);
 const RETRY_FAST: Duration = Duration::from_millis(500);
 const RETRY_SLOW: Duration = Duration::from_secs(2);
 
@@ -33,6 +29,10 @@ struct Ring {
 }
 
 pub struct Capture {
+    /// Frames kept per channel.
+    ring_frames: usize,
+    /// WASAPI loopback delivers nothing while nothing plays; older data counts as silence.
+    stale_after: Duration,
     ring: Arc<Mutex<Ring>>,
     invalidated: Arc<AtomicBool>,
     stream: Option<cpal::Stream>,
@@ -42,13 +42,15 @@ pub struct Capture {
 }
 
 impl Capture {
-    pub fn new() -> Self {
+    pub fn new(ring_frames: usize, stale_after: Duration) -> Self {
         let ring = Ring {
-            left: VecDeque::with_capacity(RING_FRAMES),
-            right: VecDeque::with_capacity(RING_FRAMES),
+            left: VecDeque::with_capacity(ring_frames),
+            right: VecDeque::with_capacity(ring_frames),
             last_write: None,
         };
         let mut c = Self {
+            ring_frames,
+            stale_after,
             ring: Arc::new(Mutex::new(ring)),
             invalidated: Arc::new(AtomicBool::new(false)),
             stream: None,
@@ -62,7 +64,7 @@ impl Capture {
 
     /// Ring memory in bytes (both channels).
     pub fn ring_bytes(&self) -> u64 {
-        (RING_FRAMES * 2 * size_of::<f32>()) as u64
+        (self.ring_frames * 2 * size_of::<f32>()) as u64
     }
 
     /// Call once per frame: re-opens the stream after device changes or errors.
@@ -95,6 +97,7 @@ impl Capture {
         let channels = config.channels as usize;
 
         let ring = Arc::clone(&self.ring);
+        let ring_frames = self.ring_frames;
         let on_data = move |data: &[f32], _: &cpal::InputCallbackInfo| {
             let Ok(mut r) = ring.lock() else { return };
             for frame in data.chunks_exact(channels) {
@@ -102,7 +105,7 @@ impl Capture {
                 r.left.push_back(l);
                 r.right.push_back(rt);
             }
-            let excess = r.left.len().saturating_sub(RING_FRAMES);
+            let excess = r.left.len().saturating_sub(ring_frames);
             r.left.drain(..excess);
             r.right.drain(..excess);
             r.last_write = Some(Instant::now());
@@ -134,7 +137,7 @@ impl Capture {
         left.clear();
         right.clear();
         let Ok(r) = self.ring.lock() else { return false };
-        let fresh = r.last_write.is_some_and(|t| t.elapsed() < STALE_AFTER);
+        let fresh = r.last_write.is_some_and(|t| t.elapsed() < self.stale_after);
         if !fresh {
             left.resize(n, 0.0);
             right.resize(n, 0.0);

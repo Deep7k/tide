@@ -8,7 +8,7 @@ use ratatui::{
     text::Span,
 };
 
-use crate::theme::TRACK;
+use crate::theme::th;
 
 /// Vertical eighth blocks, index = eighths filled.
 pub const E: [&str; 9] = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
@@ -88,7 +88,7 @@ pub fn bar(ln: &mut Ln, f: f32, w: usize, c: Color) -> &mut Ln {
         } else if i == full && part > 0 {
             ln.a(LE[part], c);
         } else {
-            ln.a("░", TRACK);
+            ln.a("░", th().track);
         }
     }
     ln

@@ -7,11 +7,8 @@ use super::{
     glyphs::{Ln, bar, spark, spark2},
 };
 use crate::app::App;
-use crate::theme::{AMBER, CORAL, CYAN, DIM, HI, ROSE, TEXT, VIOLET};
+use crate::theme::th;
 
-/// A core bar turns hot above this load.
-const HOT: f32 = 0.82;
-const PROC_ROWS: usize = 6;
 const PROC_NAME_W: usize = 22;
 
 pub fn cpu(buf: &mut Buffer, inner: Rect, app: &App) {
@@ -20,21 +17,25 @@ pub fn cpu(buf: &mut Buffer, inner: Rect, app: &App) {
 
     let hist: Vec<f32> = c.hist.iter().copied().collect();
     let mut ln = Ln::new();
-    ln.a("total ", DIM);
-    spark(&mut ln, &hist, w.saturating_sub(11), AMBER).a(&fmt::pct4(c.total), HI);
+    ln.a("total ", th().dim);
+    spark(&mut ln, &hist, w.saturating_sub(11), th().cpu).a(&fmt::pct4(c.total), th().hi);
     ln.put(buf, inner, 0, 0);
 
     let label_w = format!("c{} ", c.cores.len().saturating_sub(1)).len();
     for (i, &v) in c.cores.iter().enumerate() {
         let mut ln = Ln::new();
-        ln.a(&format!("{:<label_w$}", format!("c{i}")), DIM);
+        ln.a(&format!("{:<label_w$}", format!("c{i}")), th().dim);
         bar(
             &mut ln,
             v,
             w.saturating_sub(label_w + 5),
-            if v > HOT { ROSE } else { AMBER },
+            if v > app.cfg.stats.cpu_hot {
+                th().cpu_hot
+            } else {
+                th().cpu
+            },
         )
-        .a(&fmt::pct4(v), TEXT);
+        .a(&fmt::pct4(v), th().text);
         ln.put(buf, inner, 0, 1 + i as u16);
     }
 
@@ -42,7 +43,7 @@ pub fn cpu(buf: &mut Buffer, inner: Rect, app: &App) {
     parts.extend(c.temp_c.map(|t| format!("{t:.0}°C")));
     parts.push(format!("tide {:.1}%", c.self_use * 100.0));
     let mut ln = Ln::new();
-    ln.a(&parts.join(" · "), DIM);
+    ln.a(&parts.join(" · "), th().dim);
     ln.put(buf, inner, 0, 1 + c.cores.len() as u16);
 }
 
@@ -55,15 +56,15 @@ pub fn mem(buf: &mut Buffer, inner: Rect, app: &App) {
         .enumerate()
     {
         let mut ln = Ln::new();
-        ln.a(label, DIM);
-        bar(&mut ln, ratio(used, total), w.saturating_sub(14), VIOLET)
-            .a(&format!(" {:>8}", fmt::used_total_g(used, total)), TEXT);
+        ln.a(label, th().dim);
+        bar(&mut ln, ratio(used, total), w.saturating_sub(14), th().mem)
+            .a(&format!(" {:>8}", fmt::used_total_g(used, total)), th().text);
         ln.put(buf, inner, 0, row as u16);
     }
     let mut ln = Ln::new();
-    ln.a("tide ", DIM).a(
+    ln.a("tide ", th().dim).a(
         &format!("{} · ring buffer {}", fmt::total(m.self_bytes), fmt::mib1(m.ring_bytes)),
-        TEXT,
+        th().text,
     );
     ln.put(buf, inner, 0, 2);
 }
@@ -77,15 +78,15 @@ pub fn gpu(buf: &mut Buffer, inner: Rect, app: &App) {
         format!("{} ", g.name)
     };
     let mut ln = Ln::new();
-    ln.a(&label, DIM);
-    bar(&mut ln, g.util, w.saturating_sub(label.chars().count() + 5), CORAL).a(&fmt::pct4(g.util), TEXT);
+    ln.a(&label, th().dim);
+    bar(&mut ln, g.util, w.saturating_sub(label.chars().count() + 5), th().gpu).a(&fmt::pct4(g.util), th().text);
     ln.put(buf, inner, 0, 0);
 
     let mut parts = vec![format!("vram {}", fmt::used_total_g(g.vram_used, g.vram_total))];
     parts.extend(g.temp_c.map(|t| format!("{t:.0}°C")));
     parts.extend(g.watts.map(|p| format!("{p:.0}W")));
     let mut ln = Ln::new();
-    ln.a(&parts.join(" · "), DIM);
+    ln.a(&parts.join(" · "), th().dim);
     ln.put(buf, inner, 0, 1);
 }
 
@@ -98,15 +99,21 @@ pub fn net(buf: &mut Buffer, inner: Rect, app: &App) {
             .collect()
     };
     let rows = [
-        ("↓ ", "download", CYAN, n.down, norm(&n.down_hist, n.down_scale)),
-        ("↑ ", "upload", ROSE, n.up, norm(&n.up_hist, n.up_scale)),
+        (
+            "↓ ",
+            "download",
+            th().net_down,
+            n.down,
+            norm(&n.down_hist, n.down_scale),
+        ),
+        ("↑ ", "upload", th().net_up, n.up, norm(&n.up_hist, n.up_scale)),
     ];
     for (k, (arrow, label, color, rate, hist)) in rows.into_iter().enumerate() {
         let y = k as u16 * 3;
         let mut ln = Ln::new();
         ln.a(arrow, color)
-            .a(&format!("{label:<20}"), DIM)
-            .a(&format!("{:>11}", fmt::rate(rate)), HI);
+            .a(&format!("{label:<20}"), th().dim)
+            .a(&format!("{:>11}", fmt::rate(rate)), th().hi);
         ln.put(buf, inner, 0, y);
         let (top, bot) = spark2(&hist, w, color);
         top.put(buf, inner, 0, y + 1);
@@ -119,7 +126,7 @@ pub fn net(buf: &mut Buffer, inner: Rect, app: &App) {
             fmt::total(n.session_down),
             fmt::total(n.session_up)
         ),
-        DIM,
+        th().dim,
     );
     ln.put(buf, inner, 0, 6);
 }
@@ -127,18 +134,21 @@ pub fn net(buf: &mut Buffer, inner: Rect, app: &App) {
 pub fn procs(buf: &mut Buffer, inner: Rect, app: &App) {
     let name_w = PROC_NAME_W.min((inner.width as usize).saturating_sub(20));
     let mut ln = Ln::new();
-    ln.a(&format!("{:<7}{:<name_w$}{:>6}{:>7}", "pid", "name", "cpu", "mem"), DIM);
+    ln.a(
+        &format!("{:<7}{:<name_w$}{:>6}{:>7}", "pid", "name", "cpu", "mem"),
+        th().dim,
+    );
     ln.put(buf, inner, 0, 0);
 
-    let rows = PROC_ROWS.min((inner.height as usize).saturating_sub(1));
+    let rows = app.cfg.stats.proc_rows.min((inner.height as usize).saturating_sub(1));
     for (i, p) in app.procs.iter().take(rows).enumerate() {
         let me = p.name.eq_ignore_ascii_case("tide.exe");
         let name: String = p.name.chars().take(name_w.saturating_sub(1)).collect();
         let mut ln = Ln::new();
-        ln.a(&format!("{:<7}", p.pid), DIM)
-            .a(&format!("{name:<name_w$}"), if me { CYAN } else { TEXT })
-            .a(&format!("{:>6.1}", p.cpu), AMBER)
-            .a(&format!("{:>7}", fmt::short_size(p.mem)), TEXT);
+        ln.a(&format!("{:<7}", p.pid), th().dim)
+            .a(&format!("{name:<name_w$}"), if me { th().accent } else { th().text })
+            .a(&format!("{:>6.1}", p.cpu), th().cpu)
+            .a(&format!("{:>7}", fmt::short_size(p.mem)), th().text);
         ln.put(buf, inner, 0, 1 + i as u16);
     }
 }

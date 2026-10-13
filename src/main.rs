@@ -1,10 +1,12 @@
 mod app;
 mod audio;
+mod config;
 mod demo;
 mod theme;
 mod ui;
 
 use std::io::{self, BufWriter, Stdout};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -22,9 +24,12 @@ use ratatui::{
 
 use app::{App, Cmd};
 use audio::Audio;
+use config::Config;
 use demo::Demo;
 
-const USAGE: &str = "usage: tide [--demo] [--fps N]
+const USAGE: &str = "usage: tide [--config PATH] [--demo] [--fps N]
+       --config PATH    settings file (default: %APPDATA%\\tide\\config.toml if present)
+       --print-config   print every setting with its default, as a starting config
        --demo           fake data everywhere (no audio capture)
        --dump WxH       print one demo frame as plain text
        --probe-audio    capture 5 s of system audio and print level stats";
@@ -33,7 +38,10 @@ type Term = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
 
 struct Args {
     demo: bool,
-    fps: u32,
+    /// Overrides `fps` from the config.
+    fps: Option<u32>,
+    config: Option<PathBuf>,
+    print_config: bool,
     dump: Option<(u16, u16)>,
     probe_audio: bool,
 }
@@ -41,7 +49,9 @@ struct Args {
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         demo: false,
-        fps: 60,
+        fps: None,
+        config: None,
+        print_config: false,
         dump: None,
         probe_audio: false,
     };
@@ -50,13 +60,12 @@ fn parse_args() -> Result<Args, String> {
         match a.as_str() {
             "--demo" => args.demo = true,
             "--probe-audio" => args.probe_audio = true,
+            "--print-config" => args.print_config = true,
+            "--config" => args.config = Some(it.next().ok_or("--config needs a path")?.into()),
             "--fps" => {
                 let v = it.next().ok_or("--fps needs a value")?;
-                args.fps = v
-                    .parse()
-                    .ok()
-                    .filter(|f| (1..=240).contains(f))
-                    .ok_or(format!("bad --fps: {v}"))?;
+                let fps = v.parse::<u32>().ok().filter(|f| (1..=240).contains(f));
+                args.fps = Some(fps.ok_or(format!("bad --fps: {v} (1–240)"))?);
             }
             "--dump" => {
                 let v = it.next().ok_or("--dump needs WxH")?;
@@ -81,15 +90,26 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if args.print_config {
+        print!("{}", config::default_toml());
+        return ExitCode::SUCCESS;
+    }
+    let cfg = match load_settings(&args) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("tide: {e}");
+            return ExitCode::from(2);
+        }
+    };
     if let Some((w, h)) = args.dump {
-        print!("{}", dump(w, h));
+        print!("{}", dump(w, h, &cfg));
         return ExitCode::SUCCESS;
     }
     if args.probe_audio {
-        print!("{}", Audio::probe(5.0));
+        print!("{}", Audio::probe(&cfg.audio, 5.0));
         return ExitCode::SUCCESS;
     }
-    match run(args.fps, args.demo) {
+    match run(cfg, args.demo) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("tide: {e}");
@@ -98,7 +118,24 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(fps: u32, demo_only: bool) -> io::Result<()> {
+/// Config file, then command-line overrides, then the theme it names.
+/// Warnings go to stderr, where they're readable after tide exits.
+fn load_settings(args: &Args) -> Result<Config, String> {
+    let loaded = config::load(args.config.as_deref())?;
+    let mut cfg = loaded.config;
+    if let Some(fps) = args.fps {
+        cfg.fps = fps;
+    }
+    let base_dir = loaded.path.as_deref().and_then(|p| p.parent());
+    let (theme, theme_warnings) = theme::load(&cfg.theme, base_dir)?;
+    theme::install(theme);
+    for w in loaded.warnings.iter().chain(&theme_warnings) {
+        eprintln!("tide: warning: {w}");
+    }
+    Ok(cfg)
+}
+
+fn run(cfg: Config, demo_only: bool) -> io::Result<()> {
     // Windows' default ~15.6 ms timer tick can't pace 60 fps.
     // SAFETY: plain Win32 call, paired with timeEndPeriod below.
     unsafe { windows::Win32::Media::timeBeginPeriod(1) };
@@ -109,7 +146,7 @@ fn run(fps: u32, demo_only: bool) -> io::Result<()> {
         prev_hook(info);
     }));
 
-    let result = event_loop(&mut term, fps, demo_only);
+    let result = event_loop(&mut term, cfg, demo_only);
 
     restore();
     unsafe { windows::Win32::Media::timeEndPeriod(1) };
@@ -128,11 +165,13 @@ fn restore() {
     let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show);
 }
 
-fn event_loop(term: &mut Term, fps: u32, demo_only: bool) -> io::Result<()> {
-    let mut app = App::new();
+fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
+    let fps = cfg.fps;
+    let max_bands = cfg.spectrum.max_bands;
+    let mut audio = (!demo_only).then(|| Audio::new(&cfg.audio));
+    let mut app = App::new(cfg);
     // Live mode: real audio; the demo still feeds stats and media until those land.
     let mut demo = Demo::new(&mut app, !demo_only);
-    let mut audio = (!demo_only).then(Audio::new);
     let frame = Duration::from_secs_f64(1.0 / fps as f64);
     let mut last = Instant::now();
     let mut next = last + frame;
@@ -151,7 +190,7 @@ fn event_loop(term: &mut Term, fps: u32, demo_only: bool) -> io::Result<()> {
         }
 
         let size = term.size()?;
-        let layout = ui::layout::compute(Rect::new(0, 0, size.width, size.height));
+        let layout = ui::layout::compute(Rect::new(0, 0, size.width, size.height), max_bands);
         app.band_count = layout.bands as usize;
         demo.update(&mut app, dt as f64);
         if let Some(a) = audio.as_mut() {
@@ -207,10 +246,10 @@ fn key_action(key: KeyEvent) -> Option<Action> {
 
 /// Renders the demo 3 s in (so peaks and history look settled) and returns
 /// the frame as plain text, one line per row.
-fn dump(w: u16, h: u16) -> String {
-    let mut app = App::new();
+fn dump(w: u16, h: u16, cfg: &Config) -> String {
+    let mut app = App::new(cfg.clone());
     let mut demo = Demo::new(&mut app, false);
-    let layout = ui::layout::compute(Rect::new(0, 0, w, h));
+    let layout = ui::layout::compute(Rect::new(0, 0, w, h), cfg.spectrum.max_bands);
     app.band_count = layout.bands as usize;
     for _ in 0..180 {
         demo.update(&mut app, 1.0 / 60.0);
@@ -233,13 +272,13 @@ fn dump(w: u16, h: u16) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::dump;
+    use super::{Config, dump};
 
     /// Compares a demo frame with the saved snapshot. Run with
     /// `TIDE_BLESS=1` to rewrite snapshots after an intended change.
     fn check(w: u16, h: u16) {
         let path = format!("{}/snapshots/demo_{w}x{h}.txt", env!("CARGO_MANIFEST_DIR"));
-        let got = dump(w, h);
+        let got = dump(w, h, &Config::default());
         if std::env::var_os("TIDE_BLESS").is_some() {
             std::fs::write(&path, &got).unwrap();
             return;

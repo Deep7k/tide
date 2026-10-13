@@ -4,12 +4,8 @@
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
-/// Peak caps fall 0.012 per frame at the mock's ~15 fps.
-const PEAK_DECAY_PER_S: f32 = 0.012 * 15.0;
-/// Record spin speed while playing, rad/s.
-pub const SPIN_SPEED: f32 = 3.5;
-/// Time for the record to ease to a stop on pause.
-const SPIN_EASE_S: f32 = 0.4;
+use crate::config::Config;
+
 /// CPU sparkline history length (samples, one per 500 ms).
 pub const CPU_HIST: usize = 60;
 /// Net sparkline history length.
@@ -103,6 +99,7 @@ pub struct AudioInfo {
 }
 
 pub struct App {
+    pub cfg: Config,
     /// Band count the layout wants; sources produce this many.
     pub band_count: usize,
     pub bands: Vec<f32>,
@@ -124,8 +121,9 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(cfg: Config) -> Self {
         Self {
+            cfg,
             band_count: 36,
             bands: Vec::new(),
             peaks: Vec::new(),
@@ -155,7 +153,7 @@ impl App {
             self.peaks = levels.clone();
         }
         for (p, &v) in self.peaks.iter_mut().zip(&levels) {
-            *p = v.max(*p - PEAK_DECAY_PER_S * dt);
+            *p = v.max(*p - self.cfg.spectrum.peak_decay * dt);
         }
         self.bands = levels;
     }
@@ -163,8 +161,10 @@ impl App {
     /// Per-frame animation that doesn't depend on the data source.
     pub fn tick(&mut self, dt: f32) {
         let playing = self.media.as_ref().is_some_and(|m| m.playing);
-        let target = if playing { SPIN_SPEED } else { 0.0 };
-        let step = SPIN_SPEED / SPIN_EASE_S * dt;
+        let speed = self.cfg.deck.spin_speed;
+        let ease_s = (self.cfg.deck.spin_ease_ms as f32 / 1000.0).max(0.001);
+        let target = if playing { speed } else { 0.0 };
+        let step = speed / ease_s * dt;
         self.record_speed += (target - self.record_speed).clamp(-step, step);
         self.record_angle = (self.record_angle + self.record_speed * dt).rem_euclid(TAU);
     }
@@ -184,18 +184,18 @@ mod tests {
 
     #[test]
     fn peaks_hold_then_fall() {
-        let mut app = App::new();
+        let mut app = App::new(Config::default());
         app.set_bands(vec![0.8], 0.0);
         app.set_bands(vec![0.1], 1.0);
-        assert!((app.peaks[0] - (0.8 - PEAK_DECAY_PER_S)).abs() < 1e-6);
+        assert!((app.peaks[0] - (0.8 - app.cfg.spectrum.peak_decay)).abs() < 1e-6);
         app.set_bands(vec![0.9], 0.1);
         assert_eq!(app.peaks[0], 0.9);
     }
 
     #[test]
     fn spin_eases_to_stop_in_400ms() {
-        let mut app = App::new();
-        app.record_speed = SPIN_SPEED;
+        let mut app = App::new(Config::default());
+        app.record_speed = app.cfg.deck.spin_speed;
         app.media = None; // not playing
         for _ in 0..24 {
             app.tick(1.0 / 60.0); // 400 ms
