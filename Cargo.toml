@@ -5,9 +5,20 @@ edition = "2024"
 
 [dependencies]
 cpal = "0.18.2"
+nvml-wrapper = "0.13.0"
 ratatui = "0.30.2"
 rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_ignored = "0.1.14"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 toml = "1.1.8"
-windows = { version = "0.62.2", features = ["Win32_Media"] }
+windows = { version = "0.62.2", features = [
+    "Wdk_Graphics_Direct3D",
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
+    "Win32_Media",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_System_Performance",
+    "Win32_System_SystemInformation",
+] }

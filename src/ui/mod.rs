@@ -11,6 +11,7 @@ pub mod stats;
 use ratatui::{Frame, style::Style};
 
 use crate::app::App;
+use crate::config::ProcSort;
 use crate::theme::th;
 use layout::Layout;
 
@@ -52,7 +53,11 @@ pub fn draw(frame: &mut Frame, app: &App, l: &Layout) {
         stats::net(buf, inner, app);
     }
     if let Some(r) = l.procs {
-        let inner = chrome::panel(buf, r, "⁷", "proc", th().text, " · by cpu");
+        let by = match app.cfg.stats.proc_sort {
+            ProcSort::Cpu => " · by cpu",
+            ProcSort::Mem => " · by mem",
+        };
+        let inner = chrome::panel(buf, r, "⁷", "proc", th().text, by);
         stats::procs(buf, inner, app);
     }
     if let Some(r) = l.footer {

@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod config;
 mod demo;
+mod sys;
 mod theme;
 mod ui;
 
@@ -26,13 +27,15 @@ use app::{App, Cmd};
 use audio::Audio;
 use config::Config;
 use demo::Demo;
+use sys::Stats;
 
 const USAGE: &str = "usage: tide [--config PATH] [--demo] [--fps N]
        --config PATH    settings file (default: %APPDATA%\\tide\\config.toml if present)
        --print-config   print every setting with its default, as a starting config
        --demo           fake data everywhere (no audio capture)
        --dump WxH       print one demo frame as plain text
-       --probe-audio    capture 5 s of system audio and print level stats";
+       --probe-audio    capture 5 s of system audio and print level stats
+       --probe-stats    sample system stats for 2 s and print them";
 
 type Term = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
 
@@ -44,6 +47,7 @@ struct Args {
     print_config: bool,
     dump: Option<(u16, u16)>,
     probe_audio: bool,
+    probe_stats: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -54,12 +58,14 @@ fn parse_args() -> Result<Args, String> {
         print_config: false,
         dump: None,
         probe_audio: false,
+        probe_stats: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--demo" => args.demo = true,
             "--probe-audio" => args.probe_audio = true,
+            "--probe-stats" => args.probe_stats = true,
             "--print-config" => args.print_config = true,
             "--config" => args.config = Some(it.next().ok_or("--config needs a path")?.into()),
             "--fps" => {
@@ -107,6 +113,10 @@ fn main() -> ExitCode {
     }
     if args.probe_audio {
         print!("{}", Audio::probe(&cfg.audio, 5.0));
+        return ExitCode::SUCCESS;
+    }
+    if args.probe_stats {
+        print!("{}", sys::probe(&cfg.stats));
         return ExitCode::SUCCESS;
     }
     match run(cfg, args.demo) {
@@ -168,10 +178,11 @@ fn restore() {
 fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
     let fps = cfg.fps;
     let max_bands = cfg.spectrum.max_bands;
+    // Live mode reads audio and system stats; --demo fakes everything.
     let mut audio = (!demo_only).then(|| Audio::new(&cfg.audio));
+    let stats = (!demo_only).then(|| Stats::spawn(&cfg.stats));
     let mut app = App::new(cfg);
-    // Live mode: real audio; the demo still feeds stats and media until those land.
-    let mut demo = Demo::new(&mut app, !demo_only);
+    let mut demo = demo_only.then(|| Demo::new(&mut app));
     let frame = Duration::from_secs_f64(1.0 / fps as f64);
     let mut last = Instant::now();
     let mut next = last + frame;
@@ -192,9 +203,14 @@ fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
         let size = term.size()?;
         let layout = ui::layout::compute(Rect::new(0, 0, size.width, size.height), max_bands);
         app.band_count = layout.bands as usize;
-        demo.update(&mut app, dt as f64);
+        if let Some(d) = demo.as_mut() {
+            d.update(&mut app, dt as f64);
+        }
         if let Some(a) = audio.as_mut() {
             a.update(&mut app, dt);
+        }
+        if let Some(s) = &stats {
+            s.update(&mut app);
         }
         app.tick(dt);
 
@@ -211,7 +227,12 @@ fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
             if let Event::Key(key) = event::read()? {
                 match key_action(key) {
                     Some(Action::Quit) => return Ok(()),
-                    Some(Action::Cmd(cmd)) => demo.apply(&mut app, cmd),
+                    // Live media control arrives with SMTC (M4).
+                    Some(Action::Cmd(cmd)) => {
+                        if let Some(d) = demo.as_mut() {
+                            d.apply(&mut app, cmd);
+                        }
+                    }
                     None => {}
                 }
             }
@@ -248,7 +269,7 @@ fn key_action(key: KeyEvent) -> Option<Action> {
 /// the frame as plain text, one line per row.
 fn dump(w: u16, h: u16, cfg: &Config) -> String {
     let mut app = App::new(cfg.clone());
-    let mut demo = Demo::new(&mut app, false);
+    let mut demo = Demo::new(&mut app);
     let layout = ui::layout::compute(Rect::new(0, 0, w, h), cfg.spectrum.max_bands);
     app.band_count = layout.bands as usize;
     for _ in 0..180 {

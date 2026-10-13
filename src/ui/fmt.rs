@@ -1,5 +1,7 @@
 //! Number formatting used across panels.
 
+use crate::config::{NetUnits, TempUnit};
+
 const KIB: f64 = 1024.0;
 const MIB: f64 = KIB * 1024.0;
 const GIB: f64 = MIB * 1024.0;
@@ -15,12 +17,30 @@ pub fn mmss(secs: f64) -> String {
     format!("{}:{:02}", s / 60, s % 60)
 }
 
-/// Network rate: above 0.5 MB/s → `4.2 MB/s`, below → `312 KB/s`.
-pub fn rate(bytes_per_s: f64) -> String {
-    if bytes_per_s > 0.5 * MIB {
-        format!("{:.1} MB/s", bytes_per_s / MIB)
-    } else {
-        format!("{:.0} KB/s", bytes_per_s / KIB)
+/// Network rate. Bytes: above 0.5 MB/s → `4.2 MB/s`, below → `312 KB/s`.
+/// Bits use decimal units and Task Manager's steps: `5.7 Mbps`, `840 Kbps`.
+pub fn rate(bytes_per_s: f64, units: NetUnits) -> String {
+    match units {
+        NetUnits::Bytes if bytes_per_s > 0.5 * MIB => format!("{:.1} MB/s", bytes_per_s / MIB),
+        NetUnits::Bytes => format!("{:.0} KB/s", bytes_per_s / KIB),
+        NetUnits::Bits => {
+            let bits = bytes_per_s * 8.0;
+            if bits >= 1e9 {
+                format!("{:.1} Gbps", bits / 1e9)
+            } else if bits >= 1e6 {
+                format!("{:.1} Mbps", bits / 1e6)
+            } else {
+                format!("{:.0} Kbps", bits / 1e3)
+            }
+        }
+    }
+}
+
+/// Temperature from °C: `44°C` or `111°F`.
+pub fn temp(celsius: f32, unit: TempUnit) -> String {
+    match unit {
+        TempUnit::C => format!("{celsius:.0}°C"),
+        TempUnit::F => format!("{:.0}°F", celsius * 9.0 / 5.0 + 32.0),
     }
 }
 
@@ -80,8 +100,12 @@ mod tests {
 
     #[test]
     fn rates() {
-        assert_eq!(rate(312.0 * KIB), "312 KB/s");
-        assert_eq!(rate(4.2 * MIB), "4.2 MB/s");
+        assert_eq!(rate(312.0 * KIB, NetUnits::Bytes), "312 KB/s");
+        assert_eq!(rate(4.2 * MIB, NetUnits::Bytes), "4.2 MB/s");
+        assert_eq!(rate(712_500.0, NetUnits::Bits), "5.7 Mbps");
+        assert_eq!(rate(105_000.0, NetUnits::Bits), "840 Kbps");
+        assert_eq!(temp(44.0, TempUnit::C), "44°C");
+        assert_eq!(temp(44.0, TempUnit::F), "111°F");
     }
 
     #[test]

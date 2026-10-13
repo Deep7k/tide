@@ -1,7 +1,7 @@
 //! `--demo`: fake animated data, ported from the mock's `build()` so tide can
 //! be compared side by side with the HTML reference.
 
-use crate::app::{App, CPU_HIST, Cmd, Media, NET_HIST, Proc, push_hist};
+use crate::app::{App, CPU_HIST, Cmd, Gpu, Media, NET_HIST, Proc, push_hist};
 
 const MIB: f64 = 1024.0 * 1024.0;
 const GIB: f64 = 1024.0 * MIB;
@@ -26,26 +26,22 @@ fn cl(v: f64) -> f64 {
 pub struct Demo {
     t: f64,
     since_sample: f64,
-    /// Real audio drives spectrum/VU; the demo leaves those (and media) alone.
-    live_audio: bool,
 }
 
 impl Demo {
-    pub fn new(app: &mut App, live_audio: bool) -> Self {
-        if !live_audio {
-            app.audio.source = "demo".into();
-            app.audio.bits = "24-bit".into();
-            app.media = Some(Media {
-                title: "Lowlight Arcade".into(),
-                artist: "Halcyon Drift".into(),
-                album: "Signal Bloom".into(),
-                pos: 102.0,
-                dur: 238.0,
-                playing: true,
-            });
-            app.volume = Some(0.7);
-            app.mem.ring_bytes = (2.1 * MIB) as u64;
-        }
+    pub fn new(app: &mut App) -> Self {
+        app.audio.source = "demo".into();
+        app.audio.bits = "24-bit".into();
+        app.media = Some(Media {
+            title: "Lowlight Arcade".into(),
+            artist: "Halcyon Drift".into(),
+            album: "Signal Bloom".into(),
+            pos: 102.0,
+            dur: 238.0,
+            playing: true,
+        });
+        app.volume = Some(0.7);
+        app.mem.ring_bytes = (2.1 * MIB) as u64;
 
         // Same pre-filled history as the mock.
         app.cpu.hist = (0..CPU_HIST)
@@ -68,11 +64,14 @@ impl Demo {
         app.mem.swap_used = (0.8 * GIB) as u64;
         app.mem.self_bytes = (84.0 * MIB) as u64;
 
-        app.gpu.name = "rtx".into();
-        app.gpu.vram_used = (3.1 * GIB) as u64;
-        app.gpu.vram_total = (8.0 * GIB) as u64;
-        app.gpu.temp_c = Some(54.0);
-        app.gpu.watts = Some(31.0);
+        app.gpus = vec![Gpu {
+            name: "rtx".into(),
+            mem_used: (3.1 * GIB) as u64,
+            mem_total: (8.0 * GIB) as u64,
+            temp_c: Some(54.0),
+            watts: Some(31.0),
+            ..Default::default()
+        }];
 
         app.cpu.ghz = 4.31;
         app.cpu.self_use = 0.031;
@@ -80,7 +79,6 @@ impl Demo {
         Self {
             t: 0.0,
             since_sample: 0.0,
-            live_audio,
         }
     }
 
@@ -92,9 +90,7 @@ impl Demo {
         let hat = (1.0 - (ph + 0.5).fract()).powi(6);
         let m = 0.45 + 0.15 * (t * 0.7).sin();
 
-        if !self.live_audio {
-            Self::audio(app, t, beat, hat, m, dt);
-        }
+        Self::audio(app, t, beat, hat, m, dt);
 
         // cpu
         let cpu = cl(0.3 + 0.12 * (t * 0.4).sin() + 0.08 * beat + 0.04 * (t * 3.0).sin());
@@ -113,7 +109,7 @@ impl Demo {
 
         // mem, gpu
         app.mem.ram_used = ((0.35 + 0.01 * (t * 0.2).sin()) * 32.0 * GIB) as u64;
-        app.gpu.util = cl(0.24 + 0.05 * (t * 0.9).sin() + 0.04 * beat) as f32;
+        app.gpus[0].util = cl(0.24 + 0.05 * (t * 0.9).sin() + 0.04 * beat) as f32;
 
         // net
         let down = cl(0.35 + 0.25 * (t * 0.5).sin() + 0.1 * (t * 2.1).sin());

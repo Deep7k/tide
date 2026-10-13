@@ -58,9 +58,92 @@ pub struct StatsCfg {
     pub proc_refresh_ms: u64,
     pub proc_rows: usize,
     pub proc_group_by_name: bool,
+    pub proc_sort: ProcSort,
+    /// Process names left out of the proc panel (case-insensitive, ".exe" optional).
+    pub proc_hide: Vec<String>,
     pub cpu_hot: f32,
+    pub cpu_counter: CpuCounter,
     pub gpu_source: GpuSource,
+    pub gpus: GpuSelect,
     pub net_interface: String,
+    pub net_units: NetUnits,
+    pub temp_unit: TempUnit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProcSort {
+    Cpu,
+    Mem,
+}
+
+/// Which Windows counter the cpu panel reads.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CpuCounter {
+    /// "% Processor Utility": Task Manager's CPU figure (frequency-aware).
+    Utility,
+    /// "% Processor Time": busy time, consistent with per-process numbers.
+    Time,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetUnits {
+    Bytes,
+    Bits,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TempUnit {
+    C,
+    F,
+}
+
+/// GPUs to show: a kind, or names in display order.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GpuSelect {
+    All,
+    Discrete,
+    Integrated,
+    /// Matched against the short name ("t1200") or anywhere in the full adapter name.
+    Names(Vec<String>),
+}
+
+impl<'de> Deserialize<'de> for GpuSelect {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            One(String),
+            Many(Vec<String>),
+        }
+        let raw = Raw::deserialize(d).map_err(|_| {
+            serde::de::Error::custom("gpus must be \"all\", \"discrete\", \"integrated\", a name, or a list of names")
+        })?;
+        Ok(match raw {
+            Raw::One(s) => match s.to_ascii_lowercase().as_str() {
+                "all" => Self::All,
+                "discrete" => Self::Discrete,
+                "integrated" => Self::Integrated,
+                _ => Self::Names(vec![s]),
+            },
+            Raw::Many(names) => Self::Names(names),
+        })
+    }
+}
+
+impl GpuSelect {
+    /// TOML for `--print-config`.
+    fn to_toml(&self) -> String {
+        match self {
+            Self::All => "\"all\"".into(),
+            Self::Discrete => "\"discrete\"".into(),
+            Self::Integrated => "\"integrated\"".into(),
+            Self::Names(n) => format!("{n:?}"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -129,11 +212,36 @@ impl Default for StatsCfg {
             proc_refresh_ms: 1000,
             proc_rows: 6,
             proc_group_by_name: true,
+            proc_sort: ProcSort::Cpu,
+            proc_hide: ["System", "Registry", "Memory Compression"].map(String::from).to_vec(),
             cpu_hot: 0.82,
+            cpu_counter: CpuCounter::Utility,
             gpu_source: GpuSource::Auto,
+            gpus: GpuSelect::All,
             net_interface: "auto".into(),
+            net_units: NetUnits::Bytes,
+            temp_unit: TempUnit::C,
         }
     }
+}
+
+impl StatsCfg {
+    /// True if `name` is in `proc_hide`.
+    pub fn hides(&self, name: &str) -> bool {
+        let base = name
+            .strip_suffix(".exe")
+            .or_else(|| name.strip_suffix(".EXE"))
+            .unwrap_or(name);
+        self.proc_hide.iter().any(|h| {
+            let h = h.strip_suffix(".exe").unwrap_or(h);
+            h.eq_ignore_ascii_case(base)
+        })
+    }
+}
+
+/// Lowercase TOML name of a simple enum value, e.g. `ProcSort::Cpu` → "cpu".
+fn lower<T: std::fmt::Debug>(v: T) -> String {
+    format!("{v:?}").to_ascii_lowercase()
 }
 
 impl GpuSource {
@@ -225,6 +333,14 @@ impl Config {
         check(
             (0.0..=1.0).contains(&st.cpu_hot),
             format!("stats.cpu_hot must be 0–1 (got {})", st.cpu_hot),
+        );
+        check(
+            st.proc_hide.iter().all(|h| !h.trim().is_empty()),
+            "stats.proc_hide can't contain empty names".into(),
+        );
+        check(
+            !matches!(&st.gpus, GpuSelect::Names(n) if n.is_empty() || n.iter().any(|s| s.trim().is_empty())),
+            "stats.gpus needs at least one non-empty name".into(),
         );
         if errs.is_empty() { Ok(()) } else { Err(errs.join("\n")) }
     }
@@ -361,13 +477,29 @@ proc_refresh_ms = {proc_refresh}
 proc_rows = {rows}
 # One row per program (e.g. all chrome.exe processes summed) instead of per process.
 proc_group_by_name = {group}
+# "cpu" or "mem".
+proc_sort = "{sort}"
+# Process names to leave out (case-insensitive, ".exe" optional).
+proc_hide = {hide:?}
 # Core bars turn hot above this load (0–1).
 cpu_hot = {hot:?}
-# "auto", "nvml" (NVIDIA driver: adds temperature and watts), "counters"
-# (Windows GPU counters, any vendor), or "off".
+# "utility" matches Task Manager's CPU %; "time" is plain busy time, which
+# matches the proc panel's per-process numbers.
+cpu_counter = "{counter}"
+# Load, memory and temperature come from Windows for every GPU. Watts need
+# NVIDIA's NVML: "auto" reads it only while the NVIDIA GPU is busy (lets an idle
+# laptop dGPU sleep), "nvml" always (may keep it awake), "counters" never,
+# "off" hides GPU stats.
 gpu_source = "{gpu}"
+# "all", "discrete", "integrated", a name, or a list in display order,
+# e.g. ["t1200", "uhd"]. Names match the short label or the full adapter name.
+gpus = {gpus}
 # "auto" follows the default route, or an adapter name like "Wi-Fi".
 net_interface = "{net}"
+# "bytes" (MB/s) or "bits" (Mbps, like Task Manager).
+net_units = "{units}"
+# "c" or "f".
+temp_unit = "{temp}"
 "#,
         fps = c.fps,
         theme = c.theme,
@@ -391,6 +523,12 @@ net_interface = "{net}"
         rows = st.proc_rows,
         group = st.proc_group_by_name,
         hot = st.cpu_hot,
+        sort = lower(st.proc_sort),
+        hide = st.proc_hide,
+        counter = lower(st.cpu_counter),
+        gpus = st.gpus.to_toml(),
+        units = lower(st.net_units),
+        temp = lower(st.temp_unit),
         gpu = st.gpu_source.as_str(),
         net = st.net_interface,
     )
@@ -433,6 +571,28 @@ mod tests {
     fn type_errors_mention_the_line() {
         let err = parse::<Config>("\n\nfps = \"fast\"\n").unwrap_err();
         assert!(err.contains("line 3"), "{err}");
+    }
+
+    #[test]
+    fn gpus_accepts_kind_name_or_list() {
+        let gpus = |v: &str| parse::<Config>(&format!("[stats]\ngpus = {v}\n")).map(|(c, _)| c.stats.gpus);
+        assert_eq!(gpus("\"discrete\"").unwrap(), GpuSelect::Discrete);
+        assert_eq!(gpus("\"t1200\"").unwrap(), GpuSelect::Names(vec!["t1200".into()]));
+        assert_eq!(
+            gpus("[\"t1200\", \"uhd\"]").unwrap(),
+            GpuSelect::Names(vec!["t1200".into(), "uhd".into()])
+        );
+        assert!(gpus("3").unwrap_err().contains("gpus must be"));
+    }
+
+    #[test]
+    fn proc_hide_ignores_case_and_exe() {
+        let st = StatsCfg {
+            proc_hide: vec!["chrome".into(), "System".into()],
+            ..Default::default()
+        };
+        assert!(st.hides("chrome.exe") && st.hides("CHROME.EXE") && st.hides("system"));
+        assert!(!st.hides("Code.exe"));
     }
 
     #[test]

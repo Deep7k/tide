@@ -40,7 +40,7 @@ pub fn cpu(buf: &mut Buffer, inner: Rect, app: &App) {
     }
 
     let mut parts = vec![format!("{:.2} GHz", c.ghz)];
-    parts.extend(c.temp_c.map(|t| format!("{t:.0}°C")));
+    parts.extend(c.temp_c.map(|t| fmt::temp(t, app.cfg.stats.temp_unit)));
     parts.push(format!("tide {:.1}%", c.self_use * 100.0));
     let mut ln = Ln::new();
     ln.a(&parts.join(" · "), th().dim);
@@ -70,24 +70,40 @@ pub fn mem(buf: &mut Buffer, inner: Rect, app: &App) {
 }
 
 pub fn gpu(buf: &mut Buffer, inner: Rect, app: &App) {
-    let g = &app.gpu;
     let w = inner.width as usize;
-    let label = if g.name.chars().count() < 5 {
-        format!("{:<5}", g.name)
-    } else {
-        format!("{} ", g.name)
-    };
-    let mut ln = Ln::new();
-    ln.a(&label, th().dim);
-    bar(&mut ln, g.util, w.saturating_sub(label.chars().count() + 5), th().gpu).a(&fmt::pct4(g.util), th().text);
-    ln.put(buf, inner, 0, 0);
+    let status = app
+        .gpu_status
+        .as_deref()
+        .or(app.gpus.is_empty().then_some("no gpu found"));
+    if let Some(status) = status {
+        let mut ln = Ln::new();
+        ln.a(status, th().dim);
+        ln.put(buf, inner, 0, 0);
+        return;
+    }
+    // Two rows per GPU, as many as fit; labels share a width so the bars line up.
+    let shown = (inner.height as usize / 2).clamp(1, app.gpus.len());
+    let label_w = app.gpus[..shown]
+        .iter()
+        .map(|g| g.name.chars().count() + 1)
+        .max()
+        .unwrap_or(0)
+        .max(5);
+    for (i, g) in app.gpus[..shown].iter().enumerate() {
+        let y = i as u16 * 2;
+        let mut ln = Ln::new();
+        ln.a(&format!("{:<label_w$}", g.name), th().dim);
+        bar(&mut ln, g.util, w.saturating_sub(label_w + 5), th().gpu).a(&fmt::pct4(g.util), th().text);
+        ln.put(buf, inner, 0, y);
 
-    let mut parts = vec![format!("vram {}", fmt::used_total_g(g.vram_used, g.vram_total))];
-    parts.extend(g.temp_c.map(|t| format!("{t:.0}°C")));
-    parts.extend(g.watts.map(|p| format!("{p:.0}W")));
-    let mut ln = Ln::new();
-    ln.a(&parts.join(" · "), th().dim);
-    ln.put(buf, inner, 0, 1);
+        let kind = if g.shared { "shared" } else { "vram" };
+        let mut parts = vec![format!("{kind} {}", fmt::used_total_g(g.mem_used, g.mem_total))];
+        parts.extend(g.temp_c.map(|t| fmt::temp(t, app.cfg.stats.temp_unit)));
+        parts.extend(g.watts.map(|p| format!("{p:.0}W")));
+        let mut ln = Ln::new();
+        ln.a(&parts.join(" · "), th().dim);
+        ln.put(buf, inner, 0, y + 1);
+    }
 }
 
 pub fn net(buf: &mut Buffer, inner: Rect, app: &App) {
@@ -113,7 +129,7 @@ pub fn net(buf: &mut Buffer, inner: Rect, app: &App) {
         let mut ln = Ln::new();
         ln.a(arrow, color)
             .a(&format!("{label:<20}"), th().dim)
-            .a(&format!("{:>11}", fmt::rate(rate)), th().hi);
+            .a(&format!("{:>11}", fmt::rate(rate, app.cfg.stats.net_units)), th().hi);
         ln.put(buf, inner, 0, y);
         let (top, bot) = spark2(&hist, w, color);
         top.put(buf, inner, 0, y + 1);
@@ -150,5 +166,53 @@ pub fn procs(buf: &mut Buffer, inner: Rect, app: &App) {
             .a(&format!("{:>6.1}", p.cpu), th().cpu)
             .a(&format!("{:>7}", fmt::short_size(p.mem)), th().text);
         ln.put(buf, inner, 0, 1 + i as u16);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{buffer::Buffer, layout::Rect};
+
+    use crate::app::{App, Gpu};
+    use crate::config::Config;
+
+    fn rows(buf: &Buffer) -> Vec<String> {
+        (0..buf.area.height)
+            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect()
+    }
+
+    #[test]
+    fn gpu_panel_shows_integrated_and_discrete() {
+        const GIB: u64 = 1 << 30;
+        let mut app = App::new(Config::default());
+        app.gpus = vec![
+            Gpu {
+                name: "uhd".into(),
+                util: 0.22,
+                shared: true,
+                mem_used: GIB,
+                mem_total: 16 * GIB,
+                ..Default::default()
+            },
+            Gpu {
+                name: "t1200".into(),
+                mem_total: 4 * GIB,
+                temp_c: Some(44.0),
+                ..Default::default()
+            },
+        ];
+        let area = Rect::new(0, 0, 34, 4);
+        let mut buf = Buffer::empty(area);
+        super::gpu(&mut buf, area, &app);
+        let r = rows(&buf);
+        assert!(
+            r[0].starts_with("uhd   █████░") && r[0].ends_with("  22%"),
+            "{:?}",
+            r[0]
+        );
+        assert_eq!(r[1].trim_end(), "shared 1.0/16G");
+        assert!(r[2].starts_with("t1200 ░") && r[2].ends_with("   0%"), "{:?}", r[2]);
+        assert_eq!(r[3].trim_end(), "vram 0.0/4G · 44°C");
     }
 }

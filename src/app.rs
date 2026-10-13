@@ -44,8 +44,10 @@ pub struct Mem {
 pub struct Gpu {
     pub name: String,
     pub util: f32,
-    pub vram_used: u64,
-    pub vram_total: u64,
+    /// Integrated GPUs report shared memory; discrete ones dedicated VRAM.
+    pub shared: bool,
+    pub mem_used: u64,
+    pub mem_total: u64,
     pub temp_c: Option<f32>,
     pub watts: Option<f32>,
 }
@@ -109,7 +111,10 @@ pub struct App {
     pub record_speed: f32,
     pub cpu: Cpu,
     pub mem: Mem,
-    pub gpu: Gpu,
+    /// Every hardware GPU, in Windows' order.
+    pub gpus: Vec<Gpu>,
+    /// Shown in the gpu panel instead of stats, e.g. "no gpu found".
+    pub gpu_status: Option<String>,
     pub net: Net,
     /// Sorted by CPU, descending.
     pub procs: Vec<Proc>,
@@ -132,7 +137,8 @@ impl App {
             record_speed: 0.0,
             cpu: Cpu::default(),
             mem: Mem::default(),
-            gpu: Gpu::default(),
+            gpus: Vec::new(),
+            gpu_status: None,
             net: Net::default(),
             procs: Vec::new(),
             media: None,
