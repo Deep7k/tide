@@ -39,6 +39,8 @@ pub struct AudioCfg {
 #[serde(default)]
 pub struct SpectrumCfg {
     pub max_bands: u16,
+    /// Spectrum height cap in rows; 0 = fill the terminal.
+    pub max_rows: u16,
     pub peak_caps: bool,
     /// Peak cap fall rate, full height per second.
     pub peak_decay: f32,
@@ -192,6 +194,7 @@ impl Default for SpectrumCfg {
         // The mock drops 0.012 per frame at ~15 fps.
         Self {
             max_bands: 36,
+            max_rows: 0,
             peak_caps: true,
             peak_decay: 0.18,
         }
@@ -230,7 +233,7 @@ impl Default for StatsCfg {
         Self {
             refresh_ms: 500,
             proc_refresh_ms: 1000,
-            proc_rows: 6,
+            proc_rows: 0,
             proc_group_by_name: true,
             proc_sort: ProcSort::Cpu,
             proc_hide: ["System", "Registry", "Memory Compression"].map(String::from).to_vec(),
@@ -330,6 +333,10 @@ impl Config {
             format!("spectrum.max_bands must be 8–64 (got {})", s.max_bands),
         );
         check(
+            s.max_rows == 0 || (8..=500).contains(&s.max_rows),
+            format!("spectrum.max_rows must be 0 (fill) or 8–500 (got {})", s.max_rows),
+        );
+        check(
             s.peak_decay > 0.0,
             format!("spectrum.peak_decay must be > 0 (got {})", s.peak_decay),
         );
@@ -355,8 +362,8 @@ impl Config {
             format!("stats.proc_refresh_ms must be 100–10000 (got {})", st.proc_refresh_ms),
         );
         check(
-            (1..=50).contains(&st.proc_rows),
-            format!("stats.proc_rows must be 1–50 (got {})", st.proc_rows),
+            st.proc_rows <= 50,
+            format!("stats.proc_rows must be 0 (fill) to 50 (got {})", st.proc_rows),
         );
         check(
             (0.0..=1.0).contains(&st.cpu_hot),
@@ -489,6 +496,8 @@ vu_window_ms = {vu}
 [spectrum]
 # Band count at full width (each band is 3 columns). Narrow terminals show fewer.
 max_bands = {bands}
+# Spectrum height cap in rows (the design uses 18); 0 fills the terminal.
+max_rows = {max_rows}
 peak_caps = {caps}
 # How fast peak caps fall, in full bar heights per second.
 peak_decay = {decay:?}
@@ -508,6 +517,7 @@ seek_seconds = {seek:?}
 # Refresh interval for cpu/mem/gpu/net and their sparklines.
 refresh_ms = {refresh}
 proc_refresh_ms = {proc_refresh}
+# Rows in the proc table; 0 fills the box.
 proc_rows = {rows}
 # One row per program (e.g. all chrome.exe processes summed) instead of per process.
 proc_group_by_name = {group}
@@ -548,6 +558,7 @@ temp_unit = "{temp}"
         silence = a.silence_ms,
         vu = a.vu_window_ms,
         bands = s.max_bands,
+        max_rows = s.max_rows,
         caps = s.peak_caps,
         decay = s.peak_decay,
         spin = d.spin_speed,

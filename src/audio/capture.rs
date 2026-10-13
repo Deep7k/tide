@@ -1,9 +1,13 @@
 //! WASAPI loopback capture of the default output device via cpal.
 //!
 //! The capture callback appends to a small stereo ring; the render loop
-//! copies the latest frames out once per frame. When the default device
-//! changes (headphones plugged in, etc.) cpal reports the stream as
-//! invalidated and we re-open on the new default.
+//! copies the latest frames out once per frame.
+//!
+//! The stream is opened on the concrete device that is currently the
+//! default, and every second we check whether Windows' default has moved
+//! (earphones plugged in, Bluetooth connected, …) and re-open if so.
+//! Re-opening through cpal's "follow the default" device after a switch
+//! fails inside a running process, so we don't rely on it.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +19,8 @@ use cpal::{ErrorKind, SampleFormat};
 
 const RETRY_FAST: Duration = Duration::from_millis(500);
 const RETRY_SLOW: Duration = Duration::from_secs(2);
+/// How often to check whether the default output device changed.
+const DEVICE_CHECK: Duration = Duration::from_secs(1);
 
 pub struct Format {
     pub sample_rate: u32,
@@ -35,8 +41,12 @@ pub struct Capture {
     stale_after: Duration,
     ring: Arc<Mutex<Ring>>,
     invalidated: Arc<AtomicBool>,
+    host: cpal::Host,
     stream: Option<cpal::Stream>,
+    /// The device the stream is open on.
+    device_id: Option<cpal::DeviceId>,
     retry_at: Instant,
+    next_device_check: Instant,
     pub format: Option<Format>,
     pub last_error: Option<String>,
 }
@@ -53,8 +63,11 @@ impl Capture {
             stale_after,
             ring: Arc::new(Mutex::new(ring)),
             invalidated: Arc::new(AtomicBool::new(false)),
+            host: cpal::default_host(),
             stream: None,
+            device_id: None,
             retry_at: Instant::now(),
+            next_device_check: Instant::now() + DEVICE_CHECK,
             format: None,
             last_error: None,
         };
@@ -69,12 +82,20 @@ impl Capture {
 
     /// Call once per frame: re-opens the stream after device changes or errors.
     pub fn maintain(&mut self) {
+        let now = Instant::now();
         if self.invalidated.swap(false, Ordering::Relaxed) {
-            self.stream = None;
-            self.format = None;
-            self.retry_at = Instant::now() + RETRY_FAST;
+            self.close();
+            self.retry_at = now + RETRY_FAST;
         }
-        if self.stream.is_none() && Instant::now() >= self.retry_at {
+        if self.stream.is_some() && now >= self.next_device_check {
+            self.next_device_check = now + DEVICE_CHECK;
+            let default = self.host.default_output_device().and_then(|d| d.id().ok());
+            if default != self.device_id {
+                self.close();
+                self.retry_at = now; // re-open on the new default right away
+            }
+        }
+        if self.stream.is_none() && now >= self.retry_at {
             match self.open() {
                 Ok(()) => self.last_error = None,
                 Err(e) => {
@@ -85,9 +106,17 @@ impl Capture {
         }
     }
 
+    fn close(&mut self) {
+        self.stream = None;
+        self.format = None;
+        self.device_id = None;
+    }
+
     fn open(&mut self) -> Result<(), String> {
-        let host = cpal::default_host();
-        let device = host.default_output_device().ok_or("no default output device")?;
+        let default = self.host.default_output_device().ok_or("no default output device")?;
+        let id = default.id().map_err(|e| e.to_string())?;
+        // Open the concrete device rather than the "follow the default" one.
+        let device = self.host.device_by_id(&id).unwrap_or(default);
         let supported = device.default_output_config().map_err(|e| e.to_string())?;
         // Shared-mode WASAPI always mixes in 32-bit float.
         if supported.sample_format() != SampleFormat::F32 {
@@ -127,6 +156,8 @@ impl Capture {
             sample_format: supported.sample_format(),
         });
         self.stream = Some(stream);
+        self.device_id = Some(id);
+        self.next_device_check = Instant::now() + DEVICE_CHECK;
         Ok(())
     }
 

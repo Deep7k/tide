@@ -8,6 +8,8 @@ const GIB: f64 = 1024.0 * MIB;
 const BPM: f64 = 118.0;
 /// Demo net values are 0..1 in the mock; 1.0 = 8 MB/s.
 const NET_FULL: f64 = 8.0 * MIB;
+/// The mock's pre-filled net history.
+const MOCK_NET_SAMPLES: usize = 34;
 
 const PROCS: [(u32, &str, f32, f64); 7] = [
     (18244, "Spotify.exe", 6.2, 412.0 * MIB),
@@ -47,10 +49,10 @@ impl Demo {
         app.cpu.hist = (0..CPU_HIST)
             .map(|i| (0.3 + 0.1 * (i as f64 / 4.0).sin()) as f32)
             .collect();
-        app.net.down_hist = (0..NET_HIST)
+        app.net.down_hist = (0..MOCK_NET_SAMPLES)
             .map(|i| (0.3 + 0.2 * (i as f64 / 3.0).sin()) * NET_FULL)
             .collect();
-        app.net.up_hist = (0..NET_HIST)
+        app.net.up_hist = (0..MOCK_NET_SAMPLES)
             .map(|i| (0.1 + 0.08 * (i as f64 / 2.0).sin()) * NET_FULL)
             .collect();
         app.net.down_scale = NET_FULL;

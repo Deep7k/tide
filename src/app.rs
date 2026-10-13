@@ -9,8 +9,8 @@ use crate::config::Config;
 
 /// CPU sparkline history length (samples, one per 500 ms).
 pub const CPU_HIST: usize = 60;
-/// Net sparkline history length.
-pub const NET_HIST: usize = 34;
+/// Net sparkline history length: enough for a net panel stretched across a wide terminal.
+pub const NET_HIST: usize = 256;
 /// How long footer notices stay up.
 const NOTICE_FOR: Duration = Duration::from_secs(3);
 
@@ -64,7 +64,8 @@ pub struct Net {
     pub up: f64,
     pub down_hist: VecDeque<f64>,
     pub up_hist: VecDeque<f64>,
-    /// Rate that fills the sparkline, bytes/s.
+    /// Smallest rate that fills the sparkline, bytes/s; the graph scales up
+    /// to the peak of what's visible.
     pub down_scale: f64,
     pub up_scale: f64,
     pub session_down: u64,

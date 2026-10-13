@@ -238,9 +238,9 @@ fn apply(app: &mut App, s: Snapshot) {
     n.session_up = s.net.session_up;
     push_hist(&mut n.down_hist, n.down, NET_HIST);
     push_hist(&mut n.up_hist, n.up, NET_HIST);
-    // Auto-scale each sparkline to its recent peak.
-    n.down_scale = n.down_hist.iter().copied().fold(NET_MIN_SCALE, f64::max);
-    n.up_scale = n.up_hist.iter().copied().fold(NET_MIN_SCALE, f64::max);
+    // The UI scales each graph to its visible peak, but never below this.
+    n.down_scale = NET_MIN_SCALE;
+    n.up_scale = NET_MIN_SCALE;
 
     if let Some(procs) = s.procs {
         app.procs = procs;

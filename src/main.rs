@@ -188,6 +188,7 @@ fn restore() {
 fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
     let fps = cfg.fps;
     let max_bands = cfg.spectrum.max_bands;
+    let max_rows = (cfg.spectrum.max_rows > 0).then_some(cfg.spectrum.max_rows);
     // Live mode reads audio and system stats; --demo fakes everything.
     let mut audio = (!demo_only).then(|| Audio::new(&cfg.audio));
     let stats = (!demo_only).then(|| Stats::spawn(&cfg.stats));
@@ -213,7 +214,7 @@ fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
         }
 
         let size = term.size()?;
-        let layout = ui::layout::compute(Rect::new(0, 0, size.width, size.height), max_bands);
+        let layout = ui::layout::compute(Rect::new(0, 0, size.width, size.height), max_bands, max_rows);
         app.band_count = layout.bands as usize;
         if let Some(d) = demo.as_mut() {
             d.update(&mut app, dt as f64);
@@ -286,7 +287,11 @@ fn key_action(key: KeyEvent, seek: f64) -> Option<Action> {
 fn dump(w: u16, h: u16, cfg: &Config) -> String {
     let mut app = App::new(cfg.clone());
     let mut demo = Demo::new(&mut app);
-    let layout = ui::layout::compute(Rect::new(0, 0, w, h), cfg.spectrum.max_bands);
+    let layout = ui::layout::compute(
+        Rect::new(0, 0, w, h),
+        cfg.spectrum.max_bands,
+        (cfg.spectrum.max_rows > 0).then_some(cfg.spectrum.max_rows),
+    );
     app.band_count = layout.bands as usize;
     for _ in 0..180 {
         demo.update(&mut app, 1.0 / 60.0);

@@ -15,7 +15,8 @@ use crate::theme::th;
 /// is in those units and scales with the record.
 const REF_DOTS: f32 = 80.0;
 const RADIUS: f32 = 31.0;
-const MAX_PROGRESS_W: usize = 32;
+/// Narrowest control block: "m:ss " + 32-cell bar + " m:ss" as in the design.
+const MIN_BLOCK_W: usize = 42;
 
 pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
     if inner.height < 3 || inner.width < 4 {
@@ -32,9 +33,38 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
         }
     }
 
+    // Volume on the left, format details on the right.
+    let mut vol_ln = Ln::new();
+    if let Some(vol) = app.volume {
+        let lit = (vol.clamp(0.0, 1.0) * 10.0).round() as usize;
+        vol_ln
+            .a("vol ", th().dim)
+            .a(&"▮".repeat(lit), th().accent)
+            .a(&"▯".repeat(10 - lit), th().track);
+        let level = if app.muted {
+            " muted".to_string()
+        } else {
+            format!(" {}%", (vol * 100.0).round() as i32)
+        };
+        vol_ln.a(&level, th().text);
+    }
+    let extra = format!("33⅓ rpm · {}", app.audio.bits);
+    let gap = if vol_ln.width() == 0 { 0 } else { 3 };
+    let vol_w = vol_ln.width() + gap + extra.chars().count();
+
+    // Progress and volume form a block centred under the record, at least as
+    // wide as the design's progress line and the volume line, if the deck allows.
+    let block_w = (dots / 2).max(MIN_BLOCK_W).max(vol_w).min(inner.width as usize);
+    let block = Rect::new(
+        inner.x + (inner.width - block_w as u16) / 2,
+        inner.y,
+        block_w as u16,
+        inner.height,
+    );
+
     if let Some(m) = app.media.as_ref().filter(|m| m.dur > 0.0) {
         let (pos, dur) = (fmt::mmss(m.pos), fmt::mmss(m.dur));
-        let w = MAX_PROGRESS_W.min((inner.width as usize).saturating_sub(pos.len() + dur.len() + 2));
+        let w = block_w.saturating_sub(pos.len() + dur.len() + 2);
         if w >= 2 {
             let k = ((m.pos / m.dur.max(1.0)).clamp(0.0, 1.0) * (w - 1) as f64).round() as usize;
             let mut ln = Ln::new();
@@ -47,28 +77,15 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
                 };
             }
             ln.a(" ", th().dim).a(&dur, th().dim);
-            ln.put(buf, inner, 0, inner.height - 2);
+            ln.put(buf, block, 0, inner.height - 2);
         }
     }
 
-    let mut ln = Ln::new();
-    if let Some(vol) = app.volume {
-        let lit = (vol.clamp(0.0, 1.0) * 10.0).round() as usize;
-        ln.a("vol ", th().dim)
-            .a(&"▮".repeat(lit), th().accent)
-            .a(&"▯".repeat(10 - lit), th().track);
-        let level = if app.muted {
-            " muted   ".to_string()
-        } else {
-            format!(" {}%   ", (vol * 100.0).round() as i32)
-        };
-        ln.a(&level, th().text);
+    if vol_w <= block_w {
+        let pad = block_w - vol_ln.width() - extra.chars().count();
+        vol_ln.a(&" ".repeat(pad), th().dim).a(&extra, th().dim);
     }
-    let extra = format!("33⅓ rpm · {}", app.audio.bits);
-    if ln.width() + extra.chars().count() <= inner.width as usize {
-        ln.a(&extra, th().dim);
-    }
-    ln.put(buf, inner, 0, inner.height - 1);
+    vol_ln.put(buf, block, 0, inner.height - 1);
 }
 
 /// Renders the record as `dots`×`dots` braille dots (dots/2 cols × dots/4 rows).

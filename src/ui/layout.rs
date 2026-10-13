@@ -1,21 +1,24 @@
 //! Cell-grid layout for mockup2, with graceful degradation on small
 //! terminals. Full design size is 165×41.
 //!
-//! Width:  the deck shrinks first (its record scales down), then the
-//!         spectrum drops bands, then the deck is hidden. Bottom row panels
-//!         drop from the right: proc shrinks its name column, then hides.
-//! Height: spectrum bars shrink from 18 rows to 8, then the spacer rows go,
-//!         then the bottom row is hidden.
+//! Width:  the spectrum drops bands (down to 24) so the deck keeps room for
+//!         its controls, then the deck shrinks (record scales down), then
+//!         it hides. Bottom row panels drop from the right (proc shrinks
+//!         its name column first); the last one shown stretches to the edge.
+//! Height: extra rows go to the spectrum (and the record beside it), up to
+//!         `max_rows` if set. When short, bars shrink from 18 rows to 8,
+//!         then the spacer rows go, then the bottom row is hidden.
 
 use ratatui::layout::Rect;
 
 pub const BAND_W: u16 = 3;
 /// Fewest bands kept before the deck is hidden instead.
 const MIN_BANDS_WITH_DECK: u16 = 24;
-pub const MAX_SPEC_ROWS: u16 = 18;
 const MIN_SPEC_ROWS: u16 = 8;
 /// Spectrum box rows besides the bars: border×2, freq axis, blank, VU×2.
 const SPEC_EXTRA_ROWS: u16 = 6;
+/// Deck width that fits the progress/volume block (42) plus border and padding.
+const DECK_PREF_W: u16 = 46;
 const DECK_MIN_W: u16 = 28;
 
 const GAP_X: u16 = 2;
@@ -45,8 +48,10 @@ fn spec_box_w(bands: u16) -> u16 {
     bands * BAND_W + 4
 }
 
-/// `max_bands` is the band count at full width (36 in the design).
-pub fn compute(area: Rect, max_bands: u16) -> Layout {
+/// `max_bands` is the band count at full width (36 in the design);
+/// `max_rows` caps the spectrum height (None = fill the terminal).
+pub fn compute(area: Rect, max_bands: u16, max_rows: Option<u16>) -> Layout {
+    let cap = max_rows.unwrap_or(u16::MAX);
     let (w, h) = (area.width, area.height);
     let mut l = Layout {
         header: Rect::new(area.x, area.y, w, 1.min(h)),
@@ -55,7 +60,7 @@ pub fn compute(area: Rect, max_bands: u16) -> Layout {
 
     // --- top row widths
     let mut bands = max_bands;
-    while bands > MIN_BANDS_WITH_DECK.min(max_bands) && w < spec_box_w(bands) + GAP_X + DECK_MIN_W {
+    while bands > MIN_BANDS_WITH_DECK.min(max_bands) && w < spec_box_w(bands) + GAP_X + DECK_PREF_W {
         bands -= 1;
     }
     let show_deck = w >= spec_box_w(bands) + GAP_X + DECK_MIN_W;
@@ -71,13 +76,13 @@ pub fn compute(area: Rect, max_bands: u16) -> Layout {
     let full_rows = h.saturating_sub(1 + 1 + SPEC_EXTRA_ROWS + 1 + BOTTOM_H + 1 + 1);
     let compact_rows = h.saturating_sub(1 + SPEC_EXTRA_ROWS + BOTTOM_H + 1);
     let (spec_rows, spacer, bottom) = if full_rows >= MIN_SPEC_ROWS {
-        (full_rows.min(MAX_SPEC_ROWS), 1, true)
+        (full_rows.min(cap), 1, true)
     } else if compact_rows >= MIN_SPEC_ROWS {
-        (compact_rows, 0, true)
+        (compact_rows.min(cap), 0, true)
     } else {
         let rows = h.saturating_sub(1 + 1 + SPEC_EXTRA_ROWS + 1);
         if rows >= 3 {
-            (rows.min(MAX_SPEC_ROWS), 1, false)
+            (rows.min(cap), 1, false)
         } else {
             (h.saturating_sub(1 + SPEC_EXTRA_ROWS + 1).max(1), 0, false)
         }
@@ -114,6 +119,18 @@ pub fn compute(area: Rect, max_bands: u16) -> Layout {
                 }
             }
         }
+        // No empty strip on the right: the last panel shown takes the rest.
+        let stretch = |r: &mut Rect| r.width = area.right() - r.x;
+        if l.procs.is_none() {
+            if let Some(net) = l.net.as_mut() {
+                stretch(net);
+            } else if let (Some(mem), Some(gpu)) = (l.mem.as_mut(), l.gpu.as_mut()) {
+                stretch(mem);
+                stretch(gpu);
+            } else if let Some(cpu) = l.cpu.as_mut() {
+                stretch(cpu);
+            }
+        }
         next_y = y + BOTTOM_H;
     }
 
@@ -131,7 +148,7 @@ mod tests {
 
     #[test]
     fn full_size_matches_mock() {
-        let l = compute(Rect::new(0, 0, 165, 41), 36);
+        let l = compute(Rect::new(0, 0, 165, 41), 36, None);
         assert_eq!(l.bands, 36);
         assert_eq!(l.spec_rows, 18);
         assert_eq!(l.spectrum, Rect::new(0, 2, 112, 24));
@@ -146,17 +163,29 @@ mod tests {
 
     #[test]
     fn default_windows_terminal_size() {
-        let l = compute(Rect::new(0, 0, 120, 30), 36);
-        assert!(l.deck.is_some());
-        assert_eq!(l.bands, 28);
-        assert!(l.net.is_some() && l.procs.is_none());
+        let l = compute(Rect::new(0, 0, 120, 30), 36, None);
+        // Bands give way so the deck keeps room for its controls.
+        assert_eq!(l.bands, 24);
+        assert_eq!(l.deck.map(|d| d.width), Some(42));
+        // proc doesn't fit, so net stretches to the right edge.
+        assert!(l.procs.is_none());
+        assert_eq!(l.net.map(|n| n.right()), Some(120));
         assert!(l.spec_rows >= MIN_SPEC_ROWS);
         assert_eq!(l.footer.map(|f| f.y), Some(29));
     }
 
     #[test]
+    fn tall_terminal_grows_the_spectrum_to_the_bottom() {
+        let l = compute(Rect::new(0, 0, 188, 55), 36, None);
+        assert_eq!(l.spec_rows, 32);
+        assert_eq!(l.footer.map(|f| f.y), Some(54));
+        let capped = compute(Rect::new(0, 0, 188, 55), 36, Some(18));
+        assert_eq!(capped.spec_rows, 18);
+    }
+
+    #[test]
     fn footer_shown_without_bottom_row() {
-        let l = compute(Rect::new(0, 0, 90, 24), 36);
+        let l = compute(Rect::new(0, 0, 90, 24), 36, None);
         assert!(l.cpu.is_none());
         assert_eq!(l.footer.map(|f| f.y), Some(23));
     }
@@ -166,7 +195,7 @@ mod tests {
         for w in 10..=200 {
             for h in 5..=60 {
                 let area = Rect::new(0, 0, w, h);
-                let l = compute(area, 36);
+                let l = compute(area, 36, None);
                 for r in [Some(l.spectrum), l.deck, l.cpu, l.mem, l.gpu, l.net, l.procs, l.footer]
                     .into_iter()
                     .flatten()

@@ -1,5 +1,5 @@
 //! Cell-level drawing helpers, ported from the mock's `Ln`, `bar`, `spark`,
-//! `spark2` and `brl`.
+//! `spark2` (as `spark_rows`) and `brl`.
 
 use ratatui::{
     buffer::Buffer,
@@ -105,19 +105,24 @@ pub fn spark<'a>(ln: &'a mut Ln, vals: &[f32], w: usize, c: Color) -> &'a mut Ln
     ln
 }
 
-/// Two-row sparkline (16 levels) of the last `w` values: `(top, bottom)`.
-pub fn spark2(vals: &[f32], w: usize, c: Color) -> (Ln, Ln) {
+/// Multi-row sparkline of the last `w` values, top row first (8 levels per row;
+/// the mock's net graphs are the 2-row case).
+pub fn spark_rows(vals: &[f32], w: usize, rows: usize, c: Color) -> Vec<Ln> {
     let vals = &vals[vals.len().saturating_sub(w)..];
-    let (mut top, mut bot) = (Ln::new(), Ln::new());
+    let mut out: Vec<Ln> = (0..rows).map(|_| Ln::new()).collect();
     let pad = " ".repeat(w - vals.len());
-    top.a(&pad, c);
-    bot.a(&pad, c);
-    for v in vals {
-        let h = ((v.clamp(0.0, 1.0) * 16.0).round() as usize).max(1);
-        bot.a(E[h.min(8)], c);
-        top.a(if h > 8 { E[h - 8] } else { " " }, c);
+    for ln in &mut out {
+        ln.a(&pad, c);
     }
-    (top, bot)
+    for v in vals {
+        let h = ((v.clamp(0.0, 1.0) * (rows * 8) as f32).round() as usize).max(1);
+        // Row 0 is the top; each row shows the eighths that fall within it.
+        for (r, ln) in out.iter_mut().enumerate() {
+            let below = (rows - 1 - r) * 8;
+            ln.a(E[h.saturating_sub(below).min(8)], c);
+        }
+    }
+    out
 }
 
 /// Braille canvas: each cell holds 2×4 dots.
@@ -198,10 +203,11 @@ mod tests {
     }
 
     #[test]
-    fn spark2_splits_sixteen_levels() {
-        let (top, bot) = spark2(&[0.25, 0.75, 1.0], 3, Color::Red);
-        assert_eq!(text(&bot), "▄██");
-        assert_eq!(text(&top), " ▄█");
+    fn spark_rows_splits_levels_across_rows() {
+        let rows = spark_rows(&[0.25, 0.75, 1.0], 3, 2, Color::Red);
+        let (top, bot) = (&rows[0], &rows[1]);
+        assert_eq!(text(bot), "▄██");
+        assert_eq!(text(top), " ▄█");
     }
 
     #[test]

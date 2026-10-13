@@ -4,12 +4,10 @@ use ratatui::{buffer::Buffer, layout::Rect};
 
 use super::{
     fmt,
-    glyphs::{Ln, bar, spark, spark2},
+    glyphs::{Ln, bar, spark, spark_rows},
 };
 use crate::app::App;
 use crate::theme::th;
-
-const PROC_NAME_W: usize = 22;
 
 pub fn cpu(buf: &mut Buffer, inner: Rect, app: &App) {
     let c = &app.cpu;
@@ -109,8 +107,13 @@ pub fn gpu(buf: &mut Buffer, inner: Rect, app: &App) {
 pub fn net(buf: &mut Buffer, inner: Rect, app: &App) {
     let n = &app.net;
     let w = inner.width as usize;
-    let norm = |hist: &std::collections::VecDeque<f64>, scale: f64| -> Vec<f32> {
-        hist.iter()
+    // Only the samples that fit are drawn; scale them to their own peak
+    // (never below the floor, so idle traffic stays low).
+    let norm = |hist: &std::collections::VecDeque<f64>, floor: f64| -> Vec<f32> {
+        let visible: Vec<f64> = hist.iter().skip(hist.len().saturating_sub(w)).copied().collect();
+        let scale = visible.iter().copied().fold(floor, f64::max);
+        visible
+            .iter()
             .map(|&v| if scale > 0.0 { (v / scale) as f32 } else { 0.0 })
             .collect()
     };
@@ -124,16 +127,23 @@ pub fn net(buf: &mut Buffer, inner: Rect, app: &App) {
         ),
         ("↑ ", "upload", th().net_up, n.up, norm(&n.up_hist, n.up_scale)),
     ];
+    // Graphs grow to fill the box: header + graph for each direction, then the session line.
+    let graph_rows = (inner.height.saturating_sub(3) / 2).max(1);
     for (k, (arrow, label, color, rate, hist)) in rows.into_iter().enumerate() {
-        let y = k as u16 * 3;
+        let y = k as u16 * (graph_rows + 1);
+        // Rate right-aligned one column in from the edge (as in the design),
+        // so it follows the panel when it stretches.
+        let rate = fmt::rate(rate, app.cfg.stats.net_units);
+        let pad = w.saturating_sub(2 + label.len() + rate.len() + 1).max(1);
         let mut ln = Ln::new();
         ln.a(arrow, color)
-            .a(&format!("{label:<20}"), th().dim)
-            .a(&format!("{:>11}", fmt::rate(rate, app.cfg.stats.net_units)), th().hi);
+            .a(label, th().dim)
+            .a(&" ".repeat(pad), th().dim)
+            .a(&rate, th().hi);
         ln.put(buf, inner, 0, y);
-        let (top, bot) = spark2(&hist, w, color);
-        top.put(buf, inner, 0, y + 1);
-        bot.put(buf, inner, 0, y + 2);
+        for (r, ln) in spark_rows(&hist, w, graph_rows as usize, color).iter().enumerate() {
+            ln.put(buf, inner, 0, y + 1 + r as u16);
+        }
     }
     let mut ln = Ln::new();
     ln.a(
@@ -144,11 +154,12 @@ pub fn net(buf: &mut Buffer, inner: Rect, app: &App) {
         ),
         th().dim,
     );
-    ln.put(buf, inner, 0, 6);
+    ln.put(buf, inner, 0, 2 * (graph_rows + 1));
 }
 
 pub fn procs(buf: &mut Buffer, inner: Rect, app: &App) {
-    let name_w = PROC_NAME_W.min((inner.width as usize).saturating_sub(20));
+    // pid, cpu and mem are fixed; the name column takes the rest of the box.
+    let name_w = (inner.width as usize).saturating_sub(20);
     let mut ln = Ln::new();
     ln.a(
         &format!("{:<7}{:<name_w$}{:>6}{:>7}", "pid", "name", "cpu", "mem"),
@@ -156,7 +167,11 @@ pub fn procs(buf: &mut Buffer, inner: Rect, app: &App) {
     );
     ln.put(buf, inner, 0, 0);
 
-    let rows = app.cfg.stats.proc_rows.min((inner.height as usize).saturating_sub(1));
+    let fit = (inner.height as usize).saturating_sub(1);
+    let rows = match app.cfg.stats.proc_rows {
+        0 => fit,
+        n => n.min(fit),
+    };
     for (i, p) in app.procs.iter().take(rows).enumerate() {
         let me = p.name.eq_ignore_ascii_case("tide.exe");
         let name: String = p.name.chars().take(name_w.saturating_sub(1)).collect();
@@ -180,6 +195,20 @@ mod tests {
         (0..buf.area.height)
             .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
             .collect()
+    }
+
+    #[test]
+    fn net_rate_follows_a_stretched_panel() {
+        let mut app = App::new(Config::default());
+        app.net.down = 312.0 * 1024.0;
+        for w in [34u16, 60] {
+            let area = Rect::new(0, 0, w, 10);
+            let mut buf = Buffer::empty(area);
+            super::net(&mut buf, area, &app);
+            let row = &rows(&buf)[0];
+            // One column of breathing room on the right, as in the design.
+            assert!(row.ends_with("312 KB/s "), "{w}: {row:?}");
+        }
     }
 
     #[test]

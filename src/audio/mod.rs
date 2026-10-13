@@ -27,6 +27,8 @@ pub struct Audio {
     levels: Vec<f32>,
     /// Smoothed VU dB per channel.
     vu_db: [f32; 2],
+    /// Last capture error shown in the footer, so each one is shown once.
+    shown_error: Option<String>,
 }
 
 impl Audio {
@@ -42,6 +44,7 @@ impl Audio {
             mono: Vec::new(),
             levels: Vec::new(),
             vu_db: [dsp::FLOOR_DB; 2],
+            shown_error: None,
         }
     }
 
@@ -99,6 +102,12 @@ impl Audio {
             app.vu[ch].level = dsp::normalize(self.vu_db[ch]);
         }
 
+        if self.capture.last_error != self.shown_error {
+            if let Some(e) = &self.capture.last_error {
+                app.notify(format!("audio capture: {e}"));
+            }
+            self.shown_error = self.capture.last_error.clone();
+        }
         app.audio.source = match (&self.capture.format, &self.capture.last_error) {
             (Some(_), _) => "wasapi loopback".into(),
             (None, Some(_)) => "no audio device".into(),
