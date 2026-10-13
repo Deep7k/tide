@@ -1,0 +1,34 @@
+# Format, lint and test on every push and pull request.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # tide calls Windows-only APIs (WASAPI, PDH, DXGI, SMTC), so tests need Windows.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup is preinstalled; the first cargo call installs the toolchain and
+      # components pinned in rust-toolchain.toml.
+      - name: Toolchain
+        run: cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test

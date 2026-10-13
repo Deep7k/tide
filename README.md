@@ -24,6 +24,16 @@ It's a single ~2 MB `.exe` with no runtime dependencies.
 - Room to draw: the full design is **165×42** cells. Smaller windows still work —
   panels shrink and drop out gracefully down to about 90×24.
 
+## Download
+
+Grab `tide-vX.Y.Z-windows-x64.zip` from the
+[Releases page](https://github.com/Deep7k/tide/releases), unzip it, and run `tide.exe`
+from Windows Terminal. Each release has a `.sha256` file to check the download:
+
+```powershell
+(Get-FileHash tide-v0.1.0-windows-x64.zip -Algorithm SHA256).Hash
+```
+
 ## Running
 
 ```powershell
@@ -44,6 +54,7 @@ Options:
 | `--print-config` | Print every setting with its default and a comment |
 | `--fps N` | Frame rate (overrides the config) |
 | `--demo` | Fake data everywhere — no audio capture or system access |
+| `-V`, `--version` | Print the version |
 
 ## Building from source
 

@@ -1,0 +1,88 @@
+# Builds tide.exe and publishes a GitHub Release when a vX.Y.Z tag is pushed.
+#
+# Can also be run by hand (Actions → Release → Run workflow) for an existing tag:
+# with "publish" off it's a dry run that only uploads the zip as a workflow artifact.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build, e.g. v0.1.0
+        required: true
+      publish:
+        description: Create or update the GitHub Release (off = dry run)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      # rustup is preinstalled; the first cargo call installs the toolchain and
+      # components pinned in rust-toolchain.toml.
+      - name: Toolchain
+        run: cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tag matches Cargo.toml
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          if ("v$version" -ne $env:TAG) {
+            Write-Error "Tag $env:TAG doesn't match Cargo.toml version $version (expected v$version)"
+            exit 1
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Test
+        run: cargo test
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          $zip = "dist/tide-$env:TAG-windows-x64.zip"
+          Compress-Archive -Path target/release/tide.exe, README.md -DestinationPath $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $(Split-Path $zip -Leaf)" | Set-Content -NoNewline "$zip.sha256"
+
+      - name: Upload artifact (dry run)
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tide-${{ env.TAG }}-windows-x64
+          path: dist/*
+
+      - name: Publish release
+        if: env.PUBLISH == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # Re-run for an existing release: replace the files.
+            gh release upload $env:TAG dist/* --clobber
+          } else {
+            $flags = @('--title', "tide $env:VERSION", '--generate-notes', '--verify-tag')
+            if ($env:TAG.Contains('-')) { $flags += '--prerelease' }
+            gh release create $env:TAG dist/* @flags
+          }

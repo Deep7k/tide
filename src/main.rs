@@ -39,6 +39,7 @@ use sys::Stats;
 const USAGE: &str = "usage: tide [--config PATH] [--demo] [--fps N]
        --config PATH    settings file (default: %APPDATA%\\tide\\config.toml if present)
        --print-config   print every setting with its default, as a starting config
+       -V, --version    print the version
        --demo           fake data everywhere (no audio capture)
        --dump WxH       print one demo frame as plain text
        --probe-audio    capture 5 s of system audio and print level stats
@@ -73,6 +74,7 @@ struct Args {
     fps: Option<u32>,
     config: Option<PathBuf>,
     print_config: bool,
+    version: bool,
     dump: Option<(u16, u16)>,
     /// Hidden dev options: write a loop profile on exit; quit after N seconds.
     profile: Option<PathBuf>,
@@ -98,6 +100,7 @@ fn parse_args() -> Result<Args, String> {
             "--probe-stats" => args.probe_stats = true,
             "--probe-media" => args.probe_media = true,
             "--print-config" => args.print_config = true,
+            "-V" | "--version" => args.version = true,
             "--config" => args.config = Some(it.next().ok_or("--config needs a path")?.into()),
             "--fps" => {
                 let v = it.next().ok_or("--fps needs a value")?;
@@ -133,6 +136,11 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if args.version {
+        // From Cargo.toml at build time; release tags (vX.Y.Z) must match it.
+        println!("tide {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
     if args.print_config {
         print!("{}", config::default_toml());
         return ExitCode::SUCCESS;

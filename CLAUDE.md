@@ -108,6 +108,9 @@ Snapshots are text only: colour changes aren't covered.
 
 - Work on `master`; remote `origin` is `git@github.com:Deep7k/tide.git`.
 - Commit messages must **not** include a `Co-Authored-By: Claude` trailer.
-- Release tags are `vX.Y.Z` matching `version` in `Cargo.toml`.
+- Release tags are `vX.Y.Z` matching `version` in `Cargo.toml`; pushing one runs
+  `.github/workflows/release.yml` (tag check, tests, build, zip, GitHub Release).
+  `ci.yml` runs fmt, clippy `-D warnings` and tests on every push — keep them clean.
+  Ask before pushing tags.
 - The release profile uses `panic = "abort"` (the panic hook restores the
   terminal); `.cargo/config.toml` links the C runtime statically.

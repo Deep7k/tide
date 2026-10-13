@@ -80,11 +80,36 @@ $p.WaitForExit(); Get-Content $env:TEMP\tide-prof.txt
 A freshly built `.exe` is scanned by Windows Defender on first launch, so the
 first timing after a build is slow; measure again.
 
-## Releases
+## CI and releases
 
-- The version lives in `Cargo.toml` (`version = "x.y.z"`, semantic versioning).
-- Tag the release commit to match: `git tag -a v0.1.0 -m "tide 0.1.0"`, then push the
-  tag. `v0.1.0` is the first release.
+GitHub Actions runs on `windows-latest` (tide calls Windows-only APIs, so tests
+can't run on Linux):
+
+- **`ci.yml`**, on every push to `master` and every pull request: `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test`.
+- **`release.yml`**, on pushing a `v*` tag: checks the tag equals `v` + the
+  `Cargo.toml` version, runs the tests, builds the release `.exe`, zips `tide.exe` +
+  `README.md` as `tide-<tag>-windows-x64.zip` with a `.sha256`, and publishes a
+  GitHub Release with notes generated from the commits. Tags containing `-`
+  (`v0.2.0-rc.1`) become pre-releases.
+
+To release:
+
+```powershell
+# bump version = "0.2.0" in Cargo.toml, commit, then:
+git tag -a v0.2.0 -m "tide 0.2.0"
+git push origin master v0.2.0
+```
+
+`tide --version` prints the `Cargo.toml` version compiled into the binary.
+
+The release workflow can also be run by hand (Actions → Release → Run workflow)
+for an existing tag. With **publish** off it's a dry run: the zip is uploaded as
+a workflow artifact and no release is created. With it on, it creates the
+release or replaces the files of an existing one.
+
+Release build details:
+
 - The release profile strips symbols and uses `panic = "abort"`;
   `.cargo/config.toml` links the C runtime statically, so `tide.exe` (~2.1 MB)
   needs no Visual C++ redistributable.
