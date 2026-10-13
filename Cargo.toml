@@ -31,3 +31,12 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Threading",
     "Win32_System_Variant",
 ] }
+
+[profile.release]
+# One optimisation unit across all crates, no debug symbols: smaller, faster exe.
+lto = true
+codegen-units = 1
+strip = true
+# A panic anywhere (including the audio/stats/media threads) restores the
+# terminal in the panic hook and exits, instead of leaving the UI half-running.
+panic = "abort"
