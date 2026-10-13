@@ -135,11 +135,11 @@ impl Demo {
         procs.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
         app.procs = procs;
 
-        // media
+        // media: App::tick advances the position; the demo track loops.
         if let Some(m) = app.media.as_mut()
-            && m.playing
+            && m.pos >= m.dur
         {
-            m.pos = (m.pos + dt) % m.dur;
+            m.pos = 0.0;
         }
 
         // histories

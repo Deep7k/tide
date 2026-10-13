@@ -16,6 +16,7 @@ pub struct Config {
     pub audio: AudioCfg,
     pub spectrum: SpectrumCfg,
     pub deck: DeckCfg,
+    pub media: MediaCfg,
     pub stats: StatsCfg,
 }
 
@@ -163,6 +164,7 @@ impl Default for Config {
             audio: AudioCfg::default(),
             spectrum: SpectrumCfg::default(),
             deck: DeckCfg::default(),
+            media: MediaCfg::default(),
             stats: StatsCfg::default(),
         }
     }
@@ -192,6 +194,24 @@ impl Default for SpectrumCfg {
             max_bands: 36,
             peak_caps: true,
             peak_decay: 0.18,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct MediaCfg {
+    /// How often now-playing, position and volume are read.
+    pub poll_ms: u64,
+    /// Seconds per ← → press.
+    pub seek_seconds: f64,
+}
+
+impl Default for MediaCfg {
+    fn default() -> Self {
+        Self {
+            poll_ms: 250,
+            seek_seconds: 5.0,
         }
     }
 }
@@ -316,6 +336,14 @@ impl Config {
         check(
             self.deck.spin_speed >= 0.0,
             format!("deck.spin_speed must be ≥ 0 (got {})", self.deck.spin_speed),
+        );
+        check(
+            (50..=5000).contains(&self.media.poll_ms),
+            format!("media.poll_ms must be 50–5000 (got {})", self.media.poll_ms),
+        );
+        check(
+            (1.0..=600.0).contains(&self.media.seek_seconds),
+            format!("media.seek_seconds must be 1–600 (got {})", self.media.seek_seconds),
         );
         let st = &self.stats;
         check(
@@ -470,6 +498,12 @@ peak_decay = {decay:?}
 spin_speed = {spin:?}
 spin_ease_ms = {ease}
 
+[media]
+# How often now-playing info, position and volume are read (ms).
+poll_ms = {poll}
+# Seconds to jump per ← → press.
+seek_seconds = {seek:?}
+
 [stats]
 # Refresh interval for cpu/mem/gpu/net and their sparklines.
 refresh_ms = {refresh}
@@ -518,6 +552,8 @@ temp_unit = "{temp}"
         decay = s.peak_decay,
         spin = d.spin_speed,
         ease = d.spin_ease_ms,
+        poll = c.media.poll_ms,
+        seek = c.media.seek_seconds,
         refresh = st.refresh_ms,
         proc_refresh = st.proc_refresh_ms,
         rows = st.proc_rows,

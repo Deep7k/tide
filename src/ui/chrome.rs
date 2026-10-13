@@ -91,8 +91,13 @@ pub fn header(buf: &mut Buffer, r: Rect, app: &App) {
     left.put(buf, pad, 0, 0);
 }
 
-/// Key hints, right-aligned.
-pub fn footer(buf: &mut Buffer, r: Rect) {
+/// Key hints, right-aligned, and a transient notice on the left.
+pub fn footer(buf: &mut Buffer, r: Rect, notice: Option<&str>) {
+    if let Some(msg) = notice {
+        let mut ln = Ln::new();
+        ln.a("● ", th().accent).a(msg, th().text);
+        ln.put(buf, Rect::new(r.x + 1, r.y, r.width.saturating_sub(2), r.height), 0, 0);
+    }
     let mut ln = Ln::new();
     for (i, (key, what)) in [("␣", " pause"), ("← →", " seek"), ("q", " quit")]
         .into_iter()

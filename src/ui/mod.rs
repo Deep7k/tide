@@ -33,7 +33,12 @@ pub fn draw(frame: &mut Frame, app: &App, l: &Layout) {
     spectrum::draw(buf, inner, app, l.spec_rows);
 
     if let Some(r) = l.deck {
-        let inner = chrome::panel(buf, r, "²", "deck", th().accent, " · now spinning");
+        let state = match &app.media {
+            Some(m) if m.playing => " · now spinning",
+            Some(_) => " · paused",
+            None => " · idle",
+        };
+        let inner = chrome::panel(buf, r, "²", "deck", th().accent, state);
         deck::draw(buf, inner, app);
     }
     if let Some(r) = l.cpu {
@@ -61,6 +66,6 @@ pub fn draw(frame: &mut Frame, app: &App, l: &Layout) {
         stats::procs(buf, inner, app);
     }
     if let Some(r) = l.footer {
-        chrome::footer(buf, r);
+        chrome::footer(buf, r, app.notice());
     }
 }

@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
+use std::time::{Duration, Instant};
 
 use crate::config::Config;
 
@@ -10,6 +11,8 @@ use crate::config::Config;
 pub const CPU_HIST: usize = 60;
 /// Net sparkline history length.
 pub const NET_HIST: usize = 34;
+/// How long footer notices stay up.
+const NOTICE_FOR: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 pub struct Vu {
@@ -121,6 +124,9 @@ pub struct App {
     pub media: Option<Media>,
     /// Master volume, 0..1; None until known.
     pub volume: Option<f32>,
+    pub muted: bool,
+    /// Footer message and when it was posted, e.g. "Spotify doesn't support seeking".
+    notice: Option<(String, Instant)>,
     pub audio: AudioInfo,
     pub fps: f32,
 }
@@ -143,6 +149,8 @@ impl App {
             procs: Vec::new(),
             media: None,
             volume: None,
+            muted: false,
+            notice: None,
             audio: AudioInfo {
                 source: String::new(),
                 sample_rate: 48_000,
@@ -164,8 +172,27 @@ impl App {
         self.bands = levels;
     }
 
+    /// Shows a short message in the footer.
+    pub fn notify(&mut self, msg: String) {
+        self.notice = Some((msg, Instant::now()));
+    }
+
+    /// The footer message, while it's still fresh.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice
+            .as_ref()
+            .filter(|(_, at)| at.elapsed() < NOTICE_FOR)
+            .map(|(m, _)| m.as_str())
+    }
+
     /// Per-frame animation that doesn't depend on the data source.
     pub fn tick(&mut self, dt: f32) {
+        // Position moves on between media updates.
+        if let Some(m) = self.media.as_mut()
+            && m.playing
+        {
+            m.pos = (m.pos + dt as f64).min(m.dur.max(0.0));
+        }
         let playing = self.media.as_ref().is_some_and(|m| m.playing);
         let speed = self.cfg.deck.spin_speed;
         let ease_s = (self.cfg.deck.spin_ease_ms as f32 / 1000.0).max(0.001);

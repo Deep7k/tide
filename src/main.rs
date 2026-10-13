@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod config;
 mod demo;
+mod media;
 mod sys;
 mod theme;
 mod ui;
@@ -27,6 +28,7 @@ use app::{App, Cmd};
 use audio::Audio;
 use config::Config;
 use demo::Demo;
+use media::MediaLink;
 use sys::Stats;
 
 const USAGE: &str = "usage: tide [--config PATH] [--demo] [--fps N]
@@ -35,7 +37,8 @@ const USAGE: &str = "usage: tide [--config PATH] [--demo] [--fps N]
        --demo           fake data everywhere (no audio capture)
        --dump WxH       print one demo frame as plain text
        --probe-audio    capture 5 s of system audio and print level stats
-       --probe-stats    sample system stats for 2 s and print them";
+       --probe-stats    sample system stats for 2 s and print them
+       --probe-media    print the current media session and master volume";
 
 type Term = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
 
@@ -48,6 +51,7 @@ struct Args {
     dump: Option<(u16, u16)>,
     probe_audio: bool,
     probe_stats: bool,
+    probe_media: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -59,6 +63,7 @@ fn parse_args() -> Result<Args, String> {
         dump: None,
         probe_audio: false,
         probe_stats: false,
+        probe_media: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -66,6 +71,7 @@ fn parse_args() -> Result<Args, String> {
             "--demo" => args.demo = true,
             "--probe-audio" => args.probe_audio = true,
             "--probe-stats" => args.probe_stats = true,
+            "--probe-media" => args.probe_media = true,
             "--print-config" => args.print_config = true,
             "--config" => args.config = Some(it.next().ok_or("--config needs a path")?.into()),
             "--fps" => {
@@ -113,6 +119,10 @@ fn main() -> ExitCode {
     }
     if args.probe_audio {
         print!("{}", Audio::probe(&cfg.audio, 5.0));
+        return ExitCode::SUCCESS;
+    }
+    if args.probe_media {
+        print!("{}", media::probe());
         return ExitCode::SUCCESS;
     }
     if args.probe_stats {
@@ -181,6 +191,8 @@ fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
     // Live mode reads audio and system stats; --demo fakes everything.
     let mut audio = (!demo_only).then(|| Audio::new(&cfg.audio));
     let stats = (!demo_only).then(|| Stats::spawn(&cfg.stats));
+    let media = (!demo_only).then(|| MediaLink::spawn(&cfg.media));
+    let seek = cfg.media.seek_seconds;
     let mut app = App::new(cfg);
     let mut demo = demo_only.then(|| Demo::new(&mut app));
     let frame = Duration::from_secs_f64(1.0 / fps as f64);
@@ -212,6 +224,9 @@ fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
         if let Some(s) = &stats {
             s.update(&mut app);
         }
+        if let Some(m) = &media {
+            m.update(&mut app);
+        }
         app.tick(dt);
 
         queue!(term.backend_mut(), BeginSynchronizedUpdate)?;
@@ -225,11 +240,12 @@ fn event_loop(term: &mut Term, cfg: Config, demo_only: bool) -> io::Result<()> {
                 break;
             }
             if let Event::Key(key) = event::read()? {
-                match key_action(key) {
+                match key_action(key, seek) {
                     Some(Action::Quit) => return Ok(()),
-                    // Live media control arrives with SMTC (M4).
                     Some(Action::Cmd(cmd)) => {
-                        if let Some(d) = demo.as_mut() {
+                        if let Some(m) = &media {
+                            m.send(cmd);
+                        } else if let Some(d) = demo.as_mut() {
                             d.apply(&mut app, cmd);
                         }
                     }
@@ -250,7 +266,7 @@ enum Action {
     Cmd(Cmd),
 }
 
-fn key_action(key: KeyEvent) -> Option<Action> {
+fn key_action(key: KeyEvent, seek: f64) -> Option<Action> {
     // Windows reports both press and release.
     if key.kind != KeyEventKind::Press {
         return None;
@@ -259,8 +275,8 @@ fn key_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
         KeyCode::Char(' ') => Some(Action::Cmd(Cmd::PlayPause)),
-        KeyCode::Left => Some(Action::Cmd(Cmd::Seek(-5.0))),
-        KeyCode::Right => Some(Action::Cmd(Cmd::Seek(5.0))),
+        KeyCode::Left => Some(Action::Cmd(Cmd::Seek(-seek))),
+        KeyCode::Right => Some(Action::Cmd(Cmd::Seek(seek))),
         _ => None,
     }
 }

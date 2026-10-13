@@ -32,7 +32,7 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
         }
     }
 
-    if let Some(m) = &app.media {
+    if let Some(m) = app.media.as_ref().filter(|m| m.dur > 0.0) {
         let (pos, dur) = (fmt::mmss(m.pos), fmt::mmss(m.dur));
         let w = MAX_PROGRESS_W.min((inner.width as usize).saturating_sub(pos.len() + dur.len() + 2));
         if w >= 2 {
@@ -57,7 +57,12 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
         ln.a("vol ", th().dim)
             .a(&"▮".repeat(lit), th().accent)
             .a(&"▯".repeat(10 - lit), th().track);
-        ln.a(&format!(" {}%   ", (vol * 100.0).round() as i32), th().text);
+        let level = if app.muted {
+            " muted   ".to_string()
+        } else {
+            format!(" {}%   ", (vol * 100.0).round() as i32)
+        };
+        ln.a(&level, th().text);
     }
     let extra = format!("33⅓ rpm · {}", app.audio.bits);
     if ln.width() + extra.chars().count() <= inner.width as usize {
