@@ -28,21 +28,26 @@ fn cl(v: f64) -> f64 {
 pub struct Demo {
     t: f64,
     since_sample: f64,
+    /// Real audio drives spectrum/VU; the demo leaves those (and media) alone.
+    live_audio: bool,
 }
 
 impl Demo {
-    pub fn new(app: &mut App) -> Self {
-        app.audio.source = "demo".into();
-        app.audio.bits = "24-bit".into();
-        app.media = Some(Media {
-            title: "Lowlight Arcade".into(),
-            artist: "Halcyon Drift".into(),
-            album: "Signal Bloom".into(),
-            pos: 102.0,
-            dur: 238.0,
-            playing: true,
-        });
-        app.volume = 0.7;
+    pub fn new(app: &mut App, live_audio: bool) -> Self {
+        if !live_audio {
+            app.audio.source = "demo".into();
+            app.audio.bits = "24-bit".into();
+            app.media = Some(Media {
+                title: "Lowlight Arcade".into(),
+                artist: "Halcyon Drift".into(),
+                album: "Signal Bloom".into(),
+                pos: 102.0,
+                dur: 238.0,
+                playing: true,
+            });
+            app.volume = Some(0.7);
+            app.mem.ring_bytes = (2.1 * MIB) as u64;
+        }
 
         // Same pre-filled history as the mock.
         app.cpu.hist = (0..CPU_HIST)
@@ -64,7 +69,6 @@ impl Demo {
         app.mem.swap_total = (4.0 * GIB) as u64;
         app.mem.swap_used = (0.8 * GIB) as u64;
         app.mem.self_bytes = (84.0 * MIB) as u64;
-        app.mem.ring_bytes = (2.1 * MIB) as u64;
 
         app.gpu.name = "rtx".into();
         app.gpu.vram_used = (3.1 * GIB) as u64;
@@ -78,6 +82,7 @@ impl Demo {
         Self {
             t: 0.0,
             since_sample: 0.0,
+            live_audio,
         }
     }
 
@@ -89,34 +94,8 @@ impl Demo {
         let hat = (1.0 - (ph + 0.5).fract()).powi(6);
         let m = 0.45 + 0.15 * (t * 0.7).sin();
 
-        // spectrum
-        let n = app.band_count.max(2);
-        let band = |x: f64, i: f64| {
-            (0.08
-                + 0.62 * (1.0 - x).powf(1.6) * (0.45 + 0.55 * beat)
-                + 0.32 * (-(x - m).powi(2) / 0.012).exp() * (0.6 + 0.4 * (t * 3.0 + i).sin())
-                + 0.12 * (0.5 + 0.5 * (t * 2.3 + i * 0.55).sin())
-                + 0.06 * (t * 9.0 + i * 2.7).sin()
-                + if x > 0.62 {
-                    0.28 * hat * (0.6 + 0.4 * (i * 3.1).sin())
-                } else {
-                    0.0
-                })
-            .clamp(0.02, 0.97)
-        };
-        let levels = (0..n)
-            .map(|i| band(i as f64 / (n - 1) as f64, i as f64) as f32)
-            .collect();
-        app.set_bands(levels, dt as f32);
-
-        // VU
-        let lv = [
-            cl(0.55 + 0.35 * beat + 0.05 * (t * 7.0).sin()),
-            cl(0.52 + 0.36 * beat + 0.05 * (t * 6.0 + 1.0).sin()),
-        ];
-        for (vu, v) in app.vu.iter_mut().zip(lv) {
-            vu.level = v as f32;
-            vu.db = (20.0 * v.log10()) as f32;
+        if !self.live_audio {
+            Self::audio(app, t, beat, hat, m, dt);
         }
 
         // cpu
@@ -176,6 +155,38 @@ impl Demo {
             push_hist(&mut app.cpu.hist, app.cpu.total, CPU_HIST);
             push_hist(&mut app.net.down_hist, app.net.down, NET_HIST);
             push_hist(&mut app.net.up_hist, app.net.up, NET_HIST);
+        }
+    }
+
+    /// Spectrum and VU, straight from the mock.
+    fn audio(app: &mut App, t: f64, beat: f64, hat: f64, m: f64, dt: f64) {
+        let n = app.band_count.max(2);
+        let band = |x: f64, i: f64| {
+            (0.08
+                + 0.62 * (1.0 - x).powf(1.6) * (0.45 + 0.55 * beat)
+                + 0.32 * (-(x - m).powi(2) / 0.012).exp() * (0.6 + 0.4 * (t * 3.0 + i).sin())
+                + 0.12 * (0.5 + 0.5 * (t * 2.3 + i * 0.55).sin())
+                + 0.06 * (t * 9.0 + i * 2.7).sin()
+                + if x > 0.62 {
+                    0.28 * hat * (0.6 + 0.4 * (i * 3.1).sin())
+                } else {
+                    0.0
+                })
+            .clamp(0.02, 0.97)
+        };
+        let levels = (0..n)
+            .map(|i| band(i as f64 / (n - 1) as f64, i as f64) as f32)
+            .collect();
+        app.set_bands(levels, dt as f32);
+
+        // VU
+        let lv = [
+            cl(0.55 + 0.35 * beat + 0.05 * (t * 7.0).sin()),
+            cl(0.52 + 0.36 * beat + 0.05 * (t * 6.0 + 1.0).sin()),
+        ];
+        for (vu, v) in app.vu.iter_mut().zip(lv) {
+            vu.level = v as f32;
+            vu.db = (20.0 * v.log10()) as f32;
         }
     }
 

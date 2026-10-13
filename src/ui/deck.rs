@@ -51,13 +51,15 @@ pub fn draw(buf: &mut Buffer, inner: Rect, app: &App) {
         }
     }
 
-    let lit = (app.volume.clamp(0.0, 1.0) * 10.0).round() as usize;
     let mut ln = Ln::new();
-    ln.a("vol ", DIM)
-        .a(&"▮".repeat(lit), CYAN)
-        .a(&"▯".repeat(10 - lit), TRACK);
-    ln.a(&format!(" {}%", (app.volume * 100.0).round() as i32), TEXT);
-    let extra = format!("   33⅓ rpm · {}", app.audio.bits);
+    if let Some(vol) = app.volume {
+        let lit = (vol.clamp(0.0, 1.0) * 10.0).round() as usize;
+        ln.a("vol ", DIM)
+            .a(&"▮".repeat(lit), CYAN)
+            .a(&"▯".repeat(10 - lit), TRACK);
+        ln.a(&format!(" {}%   ", (vol * 100.0).round() as i32), TEXT);
+    }
+    let extra = format!("33⅓ rpm · {}", app.audio.bits);
     if ln.width() + extra.chars().count() <= inner.width as usize {
         ln.a(&extra, DIM);
     }

@@ -1,4 +1,5 @@
 mod app;
+mod audio;
 mod demo;
 mod theme;
 mod ui;
@@ -20,10 +21,13 @@ use ratatui::{
 };
 
 use app::{App, Cmd};
+use audio::Audio;
 use demo::Demo;
 
-const USAGE: &str = "usage: tide --demo [--fps N]
-       tide --dump WxH      print one demo frame as plain text";
+const USAGE: &str = "usage: tide [--demo] [--fps N]
+       --demo           fake data everywhere (no audio capture)
+       --dump WxH       print one demo frame as plain text
+       --probe-audio    capture 5 s of system audio and print level stats";
 
 type Term = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
 
@@ -31,6 +35,7 @@ struct Args {
     demo: bool,
     fps: u32,
     dump: Option<(u16, u16)>,
+    probe_audio: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -38,11 +43,13 @@ fn parse_args() -> Result<Args, String> {
         demo: false,
         fps: 60,
         dump: None,
+        probe_audio: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--demo" => args.demo = true,
+            "--probe-audio" => args.probe_audio = true,
             "--fps" => {
                 let v = it.next().ok_or("--fps needs a value")?;
                 args.fps = v
@@ -78,11 +85,11 @@ fn main() -> ExitCode {
         print!("{}", dump(w, h));
         return ExitCode::SUCCESS;
     }
-    if !args.demo {
-        eprintln!("tide: live audio and system data aren't wired up yet; run with --demo\n{USAGE}");
-        return ExitCode::from(2);
+    if args.probe_audio {
+        print!("{}", Audio::probe(5.0));
+        return ExitCode::SUCCESS;
     }
-    match run(args.fps) {
+    match run(args.fps, args.demo) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("tide: {e}");
@@ -91,7 +98,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(fps: u32) -> io::Result<()> {
+fn run(fps: u32, demo_only: bool) -> io::Result<()> {
     // Windows' default ~15.6 ms timer tick can't pace 60 fps.
     // SAFETY: plain Win32 call, paired with timeEndPeriod below.
     unsafe { windows::Win32::Media::timeBeginPeriod(1) };
@@ -102,7 +109,7 @@ fn run(fps: u32) -> io::Result<()> {
         prev_hook(info);
     }));
 
-    let result = event_loop(&mut term, fps);
+    let result = event_loop(&mut term, fps, demo_only);
 
     restore();
     unsafe { windows::Win32::Media::timeEndPeriod(1) };
@@ -121,9 +128,11 @@ fn restore() {
     let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show);
 }
 
-fn event_loop(term: &mut Term, fps: u32) -> io::Result<()> {
+fn event_loop(term: &mut Term, fps: u32, demo_only: bool) -> io::Result<()> {
     let mut app = App::new();
-    let mut demo = Demo::new(&mut app);
+    // Live mode: real audio; the demo still feeds stats and media until those land.
+    let mut demo = Demo::new(&mut app, !demo_only);
+    let mut audio = (!demo_only).then(Audio::new);
     let frame = Duration::from_secs_f64(1.0 / fps as f64);
     let mut last = Instant::now();
     let mut next = last + frame;
@@ -145,6 +154,9 @@ fn event_loop(term: &mut Term, fps: u32) -> io::Result<()> {
         let layout = ui::layout::compute(Rect::new(0, 0, size.width, size.height));
         app.band_count = layout.bands as usize;
         demo.update(&mut app, dt as f64);
+        if let Some(a) = audio.as_mut() {
+            a.update(&mut app, dt);
+        }
         app.tick(dt);
 
         queue!(term.backend_mut(), BeginSynchronizedUpdate)?;
@@ -197,7 +209,7 @@ fn key_action(key: KeyEvent) -> Option<Action> {
 /// the frame as plain text, one line per row.
 fn dump(w: u16, h: u16) -> String {
     let mut app = App::new();
-    let mut demo = Demo::new(&mut app);
+    let mut demo = Demo::new(&mut app, false);
     let layout = ui::layout::compute(Rect::new(0, 0, w, h));
     app.band_count = layout.bands as usize;
     for _ in 0..180 {

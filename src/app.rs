@@ -117,8 +117,8 @@ pub struct App {
     /// Sorted by CPU, descending.
     pub procs: Vec<Proc>,
     pub media: Option<Media>,
-    /// Master volume, 0..1.
-    pub volume: f32,
+    /// Master volume, 0..1; None until known.
+    pub volume: Option<f32>,
     pub audio: AudioInfo,
     pub fps: f32,
 }
@@ -138,7 +138,7 @@ impl App {
             net: Net::default(),
             procs: Vec::new(),
             media: None,
-            volume: 0.0,
+            volume: None,
             audio: AudioInfo {
                 source: String::new(),
                 sample_rate: 48_000,
