@@ -12,6 +12,7 @@ How tide works inside. For installing, running and configuring it, see the
 | [rendering.md](rendering.md) | Layout and degradation rules, drawing primitives, panels, the record, terminal output |
 | [configuration.md](configuration.md) | Config and theme loading, validation, and how to add a setting or colour |
 | [development.md](development.md) | Toolchain, tests and snapshots, diagnostic flags, profiling, releases |
+| [cicd.md](cicd.md) | GitHub Actions: CI checks, the release workflow, cutting a release, dry runs |
 
 ## Glossary
 

@@ -111,6 +111,6 @@ Snapshots are text only: colour changes aren't covered.
 - Release tags are `vX.Y.Z` matching `version` in `Cargo.toml`; pushing one runs
   `.github/workflows/release.yml` (tag check, tests, build, zip, GitHub Release).
   `ci.yml` runs fmt, clippy `-D warnings` and tests on every push — keep them clean.
-  Ask before pushing tags.
+  Ask before pushing tags. Details in `docs/cicd.md`.
 - The release profile uses `panic = "abort"` (the panic hook restores the
   terminal); `.cargo/config.toml` links the C runtime statically.
