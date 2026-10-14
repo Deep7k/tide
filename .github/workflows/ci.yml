@@ -15,7 +15,7 @@ jobs:
     # tide calls Windows-only APIs (WASAPI, PDH, DXGI, SMTC), so tests need Windows.
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # rustup is preinstalled; the first cargo call installs the toolchain and
       # components pinned in rust-toolchain.toml.
