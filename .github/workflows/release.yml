@@ -60,7 +60,7 @@ jobs:
         run: |
           New-Item -ItemType Directory dist | Out-Null
           $zip = "dist/tide-$env:TAG-windows-x64.zip"
-          Compress-Archive -Path target/release/tide.exe, README.md -DestinationPath $zip
+          Compress-Archive -Path target/release/tide.exe, README.md, LICENSE -DestinationPath $zip
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
           "$hash  $(Split-Path $zip -Leaf)" | Set-Content -NoNewline "$zip.sha256"
 

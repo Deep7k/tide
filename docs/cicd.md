@@ -49,8 +49,8 @@ Triggered by pushing a tag matching `v*`. Steps:
    name and `tide --version` in sync.
 2. **Test:** `cargo test`. A release never ships with failing tests.
 3. **Build:** `cargo build --release`.
-4. **Package:** `dist/tide-<tag>-windows-x64.zip` containing `tide.exe` and
-   `README.md`, plus `dist/tide-<tag>-windows-x64.zip.sha256` in `sha256sum` format
+4. **Package:** `dist/tide-<tag>-windows-x64.zip` containing `tide.exe`,
+   `README.md` and `LICENSE`, plus `dist/tide-<tag>-windows-x64.zip.sha256` in `sha256sum` format
    (`<hash>  <file>`).
 5. **Publish:** `gh release create <tag> dist/* --title "tide <version>"
    --generate-notes --verify-tag`, authenticated with the workflow's own

@@ -112,5 +112,8 @@ Snapshots are text only: colour changes aren't covered.
   `.github/workflows/release.yml` (tag check, tests, build, zip, GitHub Release).
   `ci.yml` runs fmt, clippy `-D warnings` and tests on every push — keep them clean.
   Ask before pushing tags. Details in `docs/cicd.md`.
+- `build.rs` embeds `assets/tide.ico` and version info (from `Cargo.toml`) into the
+  `.exe` via `winresource` (needs the Windows SDK's `rc.exe`). README media is in
+  `assets/`; large originals go in git-ignored `assets/source/`.
 - The release profile uses `panic = "abort"` (the panic hook restores the
   terminal); `.cargo/config.toml` links the C runtime statically.

@@ -99,6 +99,7 @@ Release build details:
 | --- | --- |
 | `src/` | the app (see [architecture.md](architecture.md#module-map)) |
 | `snapshots/` | saved demo frames for the snapshot tests |
+| `assets/` | `tide.ico` (embedded into the `.exe` by `build.rs` with version info from `Cargo.toml`), the README icon and demo GIF. Originals live in git-ignored `assets/source/` |
 | `docs/` | these docs |
 | `mockups/` | the original design handoff (git-ignored, local only) |
 | `.toolchain/`, `target/` | local toolchain and build output (git-ignored) |
