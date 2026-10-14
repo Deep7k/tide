@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="assets/tide-128.png" width="44" height="44" alt="" align="center">&nbsp;tide
+  <img src="assets/tide-128.png" width="44" height="44" alt="" align="absmiddle">&nbsp;tide
 </h1>
 
 <p align="center">
